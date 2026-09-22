@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#f8f9f6" />
+  <title>A-Jent — Autonomous Job Exploration and Navigation Tool</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/styles.css?v=jobs-board-2" />
+</head>
+<body>
+  <div class="auth-gate" id="authGate" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+    <div class="auth-panel">
+      <div class="auth-brand"><span class="brand-mark" aria-hidden="true">A</span><span><strong>A-Jent</strong><small>Autonomous Job Exploration and Navigation Tool</small></span></div>
+      <div class="auth-heading"><div class="eyebrow">Your career workspace</div><h1 id="authTitle">Keep your search connected.</h1><p>Sign in to view your private job matches, resume, applications, and agent activity.</p></div>
+      <div class="auth-tabs" role="tablist" aria-label="Authentication mode"><button class="auth-tab is-active" type="button" data-auth-mode="login" role="tab" aria-selected="true">Log in</button><button class="auth-tab" type="button" data-auth-mode="register" role="tab" aria-selected="false">Create account</button></div>
+      <form id="authForm" class="auth-form">
+        <label class="auth-field is-hidden" id="authNameField">Name<input id="authName" name="name" type="text" autocomplete="name" placeholder="Your name" /></label>
+        <label class="auth-field">Email<input id="authEmail" name="email" type="email" autocomplete="email" placeholder="you@example.com" required /></label>
+        <label class="auth-field">Password<input id="authPassword" name="password" type="password" autocomplete="current-password" placeholder="At least 4 characters" minlength="4" required /></label>
+        <div class="auth-error" id="authError" role="alert" aria-live="polite"></div>
+        <button class="primary-button auth-submit" id="authSubmit" type="submit">Log in to A-Jent</button>
+      </form>
+      <p class="auth-footnote">Your account data stays in the existing A-Jent user store. You can sign out from the account menu at any time.</p>
+    </div>
+  </div>
+
+  <div class="modal-backdrop is-hidden" id="emailModalBackdrop" role="dialog" aria-modal="true" aria-labelledby="emailModalTitle">
+    <div class="modal" id="emailModal">
+      <div class="modal-icon" aria-hidden="true"><i class="ti ti-bell-ringing"></i></div>
+      <h2 id="emailModalTitle">Keep alerts optional</h2>
+      <p>Give A-Jent an email and it can notify you when a new matching role is found. You can also skip this and add alerts later from Settings.</p>
+      <input class="modal-input" id="emailModalInput" type="email" placeholder="you@example.com" autocomplete="email" aria-describedby="emailModalError" />
+      <div class="modal-error" id="emailModalError" aria-live="polite"></div>
+      <button class="primary-button" id="emailModalBtn" type="button">Set up job alerts</button>
+      <button class="modal-skip" id="emailModalSkip" type="button">Skip for now</button>
+    </div>
+  </div>
+
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <a class="brand" href="#jobs" data-route="jobs" aria-label="A-Jent Jobs">
+        <span class="brand-mark" aria-hidden="true">A</span>
+        <span>
+          <span class="brand-wordmark">A-Jent</span>
+          <span class="brand-tagline">Autonomous Job Exploration and Navigation Tool</span>
+        </span>
+      </a>
+
+      <div class="side-label">Work area</div>
+      <nav class="route-list" aria-label="Work area">
+        <button class="nav-item is-active" type="button" data-route="jobs" aria-current="page"><i class="ti ti-briefcase-2" aria-hidden="true"></i><span>Jobs</span></button>
+        <button class="nav-item" type="button" data-route="resume"><i class="ti ti-file-text" aria-hidden="true"></i><span>Resume</span></button>
+        <button class="nav-item" type="button" data-route="profile"><i class="ti ti-user" aria-hidden="true"></i><span>Profile</span></button>
+        <button class="nav-item" type="button" data-route="agent"><i class="ti ti-radar-2" aria-hidden="true"></i><span>AI Agent</span></button>
+        <button class="nav-item" type="button" data-route="coaching"><i class="ti ti-target-arrow" aria-hidden="true"></i><span>Coaching</span></button>
+        <button class="nav-item" type="button" data-route="interview"><i class="ti ti-message-circle" aria-hidden="true"></i><span>Interview</span><span class="new-badge">NEW</span></button>
+      </nav>
+
+      <div class="side-label account">Account</div>
+      <nav class="route-list" aria-label="Account">
+        <button class="nav-item" type="button" data-route="log"><i class="ti ti-terminal-2" aria-hidden="true"></i><span>Activity</span></button>
+        <button class="nav-item" type="button" data-route="notifications"><i class="ti ti-bell" aria-hidden="true"></i><span>Notifications</span></button>
+        <button class="nav-item" type="button" data-route="help"><i class="ti ti-help-circle" aria-hidden="true"></i><span>Help</span></button>
+        <button class="nav-item" type="button" data-route="settings"><i class="ti ti-settings-2" aria-hidden="true"></i><span>Settings</span></button>
+      </nav>
+
+      <div class="side-note">
+        <div class="side-note-head">Agent cadence</div>
+        <p>A-Jent checks your sources on schedule and keeps the queue ready for your next decision.</p>
+      </div>
+      <div class="side-account">
+        <span class="avatar" id="sidebarAvatar">A</span>
+        <span class="account-copy"><strong>Your workspace</strong><span>Current resume connected</span></span>
+      </div>
+    </aside>
+
+    <main class="main-column">
+      <div class="mobile-topbar">
+        <a class="mobile-brand" href="#jobs" data-route="jobs"><span class="brand-mark" aria-hidden="true">A</span><span>A-Jent</span></a>
+        <button class="icon-button mobile-menu" type="button" data-action="mobile-menu" aria-label="Show navigation"><i class="ti ti-menu-2" aria-hidden="true"></i></button>
+      </div>
+      <nav class="mobile-route-nav" id="mobileRouteNav" aria-label="Mobile navigation">
+        <button class="nav-item is-active" type="button" data-route="jobs"><i class="ti ti-briefcase-2" aria-hidden="true"></i><span>Jobs</span></button>
+        <button class="nav-item" type="button" data-route="resume"><i class="ti ti-file-text" aria-hidden="true"></i><span>Resume</span></button>
+        <button class="nav-item" type="button" data-route="agent"><i class="ti ti-radar-2" aria-hidden="true"></i><span>Agent</span></button>
+        <button class="nav-item" type="button" data-route="settings"><i class="ti ti-settings-2" aria-hidden="true"></i><span>Settings</span></button>
+      </nav>
+
+      <header class="topbar">
+        <div class="topbar-heading">
+          <div class="breadcrumb" id="pageBreadcrumb">Workspace / Jobs</div>
+          <div class="title-row"><h1 class="page-title" id="pageTitle">Jobs</h1><span class="page-subtitle" id="pageSubtitle">A clearer next step for your search.</span></div>
+          <nav class="jobs-browse-tabs" id="jobsBrowseTabs" aria-label="Job views">
+            <button class="jobs-browse-tab is-active" type="button" data-browse-tab="recommended" aria-current="page">Recommended</button>
+            <button class="jobs-browse-tab" type="button" data-browse-tab="saved" aria-disabled="true" disabled>Saved <span>0</span></button>
+            <button class="jobs-browse-tab" type="button" data-browse-tab="applications">Applications <span id="jobsApplicationsTabCount">0</span></button>
+            <button class="jobs-browse-tab" type="button" data-browse-tab="external" aria-disabled="true" disabled>External <span>0</span></button>
+          </nav>
+        </div>
+        <label class="search-field jobs-header-search" for="searchInput"><i class="ti ti-search" aria-hidden="true"></i><input id="searchInput" type="search" placeholder="Search by job title or company" autocomplete="off" /></label>
+        <div class="top-actions">
+          <span class="connection-state" id="connectionState"><span id="connectionText">Search connected</span></span>
+          <button class="icon-button" type="button" data-action="notifications" aria-label="Open notifications"><i class="ti ti-bell" aria-hidden="true"></i></button>
+          <div class="account-control">
+            <button class="account-button" type="button" data-action="toggle-account" aria-expanded="false" aria-controls="accountMenu"><span class="avatar" id="topAvatar">A</span><span class="top-account-label" id="accountButtonLabel">Account</span><i class="ti ti-chevron-down" aria-hidden="true"></i></button>
+            <div class="account-menu is-hidden" id="accountMenu" role="menu"><div class="account-menu-user"><strong id="accountMenuName">Your workspace</strong><span id="accountMenuEmail">Not signed in</span></div><button type="button" data-action="account-settings" role="menuitem"><i class="ti ti-settings-2" aria-hidden="true"></i>Settings</button><button type="button" data-action="logout" role="menuitem"><i class="ti ti-logout-2" aria-hidden="true"></i>Sign out</button></div>
+          </div>
+        </div>
+      </header>
+
+      <section class="route-view is-active" id="view-jobs" data-view="jobs" aria-labelledby="jobsViewTitle">
+        <div class="state-banner is-hidden" id="jobsStateBanner" role="status"></div>
+        <section class="surface clipped jobs-filter-bar" aria-label="Job filters">
+          <div class="jobs-filter-row">
+            <div class="filter-controls" id="filterControls">
+              <select class="filter-control" id="sourceFilter" aria-label="Filter by source"><option value="">Source</option></select>
+              <select class="filter-control" id="locationFilter" aria-label="Filter by location"><option value="">Location</option></select>
+              <select class="filter-control" id="scoreFilter" aria-label="Filter by match score"><option value="0">Match score</option><option value="0.7">70%+ match</option><option value="0.4">40%+ match</option><option value="0.25">25%+ match</option></select>
+              <select class="filter-control" id="dateFilter" aria-label="Filter by found date"><option value="">Found date</option><option value="today">Today</option><option value="week">This week</option></select>
+              <button class="filter-chip" id="remoteFilter" type="button" data-action="remote-filter" aria-pressed="false">Remote only</button>
+              <button class="filter-chip" id="scoreFilterChip" type="button" data-action="score-filter" aria-pressed="false">70%+ match</button>
+              <button class="filter-all-button" type="button" data-action="toggle-filters"><i class="ti ti-adjustments-horizontal" aria-hidden="true"></i><span>All filters</span><span class="mono" id="filterCount">00</span></button>
+            </div>
+            <label class="sort-control" for="sortSelect"><span>Sort</span><select id="sortSelect" aria-label="Sort jobs"><option value="score">Recommended</option><option value="recent">Most recent</option></select></label>
+          </div>
+          <div class="active-filter-chips" id="activeFilterChips" aria-live="polite"></div>
+          <div class="jobs-filter-meta"><span id="filterStatus">Showing roles found by A-Jent · sorted by strongest alignment</span><button class="filter-reset" type="button" data-action="reset-filters">Reset filters</button><span class="mono" id="resultsCount">0 roles</span></div>
+        </section>
+
+        <div class="jobs-workspace">
+          <section class="jobs-results-column" aria-labelledby="jobsViewTitle">
+            <div class="atlas-heading jobs-results-heading"><div><div class="eyebrow">Resume-matched roles</div><h2 id="jobsViewTitle">Recommended jobs</h2></div><span class="updated-label" id="jobsUpdated">waiting for the latest search</span></div>
+            <div id="jobsGrid"><div class="empty-state surface"><div><i class="ti ti-briefcase-2" aria-hidden="true"></i><h3>Loading your roles</h3><p>A-Jent is checking the latest jobs response.</p></div></div></div>
+          </section>
+
+          <aside class="jobs-utility-rail" id="jobsUtilityRail" aria-label="Jobs workspace context">
+            <section class="utility-profile"><span class="utility-avatar avatar" id="utilityAvatar">A</span><div><strong id="utilityUserName">Your workspace</strong><span id="utilityUserEmail">Not signed in</span></div></section>
+            <section class="utility-section"><div class="utility-section-head"><h3>Current search</h3><span class="utility-count" id="utilityFilterCount">0</span></div><div id="utilityFilterSummary" class="utility-summary">No active filters</div><button class="utility-link" type="button" data-action="reset-filters">Clear filters <i class="ti ti-arrow-up-right" aria-hidden="true"></i></button></section>
+            <section class="utility-section"><div class="utility-section-head"><h3>Applications</h3><span class="utility-count" id="utilityApplicationsCount">0</span></div><p class="utility-copy">Records returned by the application service.</p><button class="utility-link" type="button" data-route="applied">View applications <i class="ti ti-arrow-up-right" aria-hidden="true"></i></button></section>
+            <section class="utility-section utility-note"><div class="utility-note-icon"><i class="ti ti-bookmark-off" aria-hidden="true"></i></div><div><h3>Saved filters</h3><p>Saved searches are not connected yet. Your current filters stay visible while you browse.</p></div></section>
+          </aside>
+        </div>
+        <div class="job-detail-scrim is-hidden" id="roleDetailsScrim" data-action="close-details" aria-hidden="true"></div>
+        <aside class="job-detail-drawer is-hidden" id="roleDetails" role="dialog" aria-modal="true" aria-labelledby="roleDetailsTitle" aria-label="Selected role details">
+          <div id="roleDetailsContent"></div>
+        </aside>
+      </section>
+
+      <section class="route-view" id="view-agent" data-view="agent" aria-labelledby="agentViewTitle">
+        <div class="agent-intro"><div class="intro-copy"><div class="eyebrow">Search cadence</div><h2 id="agentViewTitle">A-Jent is keeping your shortlist moving.</h2><p>Each completed search is translated into roles seen, matches found, and applications sent—so you can pick up where the agent left off.</p></div><div class="agent-state"><strong>Latest completed search</strong><span id="agentLastChecked">No completed cycle returned</span></div></div>
+        <section class="outcome-sequence" aria-label="Agent outcomes" id="agentOutcomes"></section>
+        <div class="agent-grid"><div class="agent-stack"><section class="surface"><div class="panel-head"><div><h3>Latest search</h3><p>The most recent completed search cycle.</p></div><span class="panel-note">/api/stats · last_cycle</span></div><div class="panel-body" id="latestSearchPanel"></div></section><section class="surface"><div class="panel-head"><div><h3>Where A-Jent looked</h3><p>Source totals from the latest stats response.</p></div><span class="panel-note">source_breakdown</span></div><div class="panel-body" id="sourceBreakdown"></div></section><section class="surface"><div class="panel-head"><div><h3>Search history</h3><p>Recent cycles, newest first.</p></div><span class="panel-note">recent_cycles</span></div><div class="history" id="cycleHistory"></div></section></div><div class="agent-stack"><section class="surface"><div class="panel-head"><div><h3>Application queue</h3><p>Truthful progress from the application service.</p></div><span class="panel-note">/api/applied-jobs</span></div><div id="agentApplicationQueue"></div></section><section class="surface"><div class="panel-head"><div><h3>Search notes</h3><p>What this page can confirm from live data.</p></div><span class="panel-note">candidate view</span></div><div class="note-list"><div class="note-item"><i class="ti ti-circle-check" aria-hidden="true"></i><span>A-Jent ranks roles against the current resume and records the completed search cycle.</span></div><div class="note-item"><i class="ti ti-circle-check" aria-hidden="true"></i><span>Source rows and history update from the stats response—no synthetic trend is shown.</span></div><div class="note-item is-warning"><i class="ti ti-info-circle" aria-hidden="true"></i><span>A next scheduled time is not shown because the current API does not return one.</span></div></div></section></div></div>
+        <section class="surface technical" id="technicalDetails"><button class="detail-toggle" type="button" data-action="toggle-technical" aria-controls="technicalContent" aria-expanded="false"><span class="technical-title"><i class="ti ti-terminal-2" aria-hidden="true"></i>Technical details <span class="muted">· activity stream</span></span><span class="technical-status" id="agentStreamState">Reconnecting…</span><i class="ti ti-chevron-down detail-chevron" aria-hidden="true"></i></button><div class="technical-content" id="technicalContent"><div class="tech-actions"><small>Raw /api/log/stream output stays here when you need it.</small><button class="outline-button" type="button" data-action="toggle-log-pause" id="agentPauseButton">Pause updates</button></div><div class="log-lines" id="agentLogLines"></div><div class="reconnect-note" id="agentReconnectNote">Activity updates are paused while A-Jent reconnects. Your last loaded history remains visible.</div></div></section>
+        <div class="agent-footer"><span><strong>Designed for real states.</strong> Counts, sources, cycles, applications, and technical activity map to existing A-Jent responses.</span><a href="#technicalDetails">View state patterns <i class="ti ti-arrow-up-right" aria-hidden="true"></i></a></div>
+      </section>
+
+      <section class="route-view" id="view-resume" data-view="resume" aria-labelledby="resumeViewTitle">
+        <div class="view-intro"><div><div class="eyebrow">Workspace / Resume</div><h2 id="resumeViewTitle">Resume</h2><p>Keep one current document ready for matching. A-Jent uses extracted text as the comparison source.</p></div><button class="dark-button" type="button" data-action="focus-upload"><i class="ti ti-refresh" aria-hidden="true"></i>Replace resume</button></div>
+        <div class="state-banner is-hidden" id="resumeStateBanner" role="status"></div>
+        <div class="resume-grid"><section class="surface resume-document"><div class="document-label"><span class="eyebrow">Current document</span><span class="status-badge" id="resumePrimaryBadge">Waiting</span></div><div id="resumeStatus"></div></section><section class="surface upload-card"><h3>Bring your latest resume</h3><p>Upload a PDF or DOCX to replace the document A-Jent currently uses.</p><div class="drop-zone" id="dropZone" role="button" tabindex="0" aria-label="Choose resume file"><div><i class="ti ti-cloud-upload" aria-hidden="true"></i><strong>Drop your resume here</strong><span>or browse from your device. A-Jent only needs readable text to begin matching you with roles.</span><small>Accepted: PDF · DOCX · DOC</small></div><input type="file" id="resumeInput" accept=".pdf,.docx,.doc" hidden /></div><div class="upload-result" id="uploadResult" aria-live="polite"></div></section></div>
+        <section class="surface resume-manager-card" id="resumeManagerSection"><div class="panel-head"><div><div class="eyebrow text-mint">Resume library</div><h3>Manage uploaded resumes</h3><p>Switch your Primary Resume anytime. The AI Agent will immediately use the newly selected Primary Resume as its single source of truth for all matching, recommendations, and actions.</p></div><div class="panel-actions"><span class="panel-note" id="resumesCountBadge">0 resumes</span></div></div><div class="agent-source-banner" id="agentPrimaryResumeBanner"><div class="agent-source-icon"><i class="ti ti-robot" aria-hidden="true"></i></div><div class="agent-source-copy"><div class="agent-source-title"><strong>Agent Source of Truth:</strong> <span class="agent-resume-name" id="agentPrimaryResumeName">Checking…</span><span class="agent-status-tag"><i class="ti ti-circle-check" aria-hidden="true"></i> Active</span></div><p>Only your <strong>Primary Resume</strong> is evaluated during search cycles and auto-apply submissions.</p></div></div><div id="uploadedResumesList" class="resumes-list" aria-live="polite"></div></section>
+        <div class="resume-lower"><section class="surface info-list"><h3>How A-Jent uses this file</h3><p>A-Jent compares the text in your current resume with the roles it finds. A higher local match score means the role shares more language with your document—it does not promise an interview or hiring outcome.</p><div class="info-points"><span>One current document</span><span>Used on the next search</span><span>Kept in your workspace</span></div></section><section class="surface"><div class="panel-head"><div><h3>Upload response states</h3><p>API-aware feedback</p></div></div><div class="response-list"><div class="response-state"><strong>Resume text extracted</strong><span>Show the returned upload result.</span></div><div class="response-state warn"><strong>No readable text found</strong><span>File uploaded, but extraction returned zero.</span></div><div class="response-state error"><strong>Upload could not finish</strong><span>Keep the current document and offer retry.</span></div></div></section></div>
+      </section>
+
+      <section class="route-view" id="view-applied" data-view="applied" aria-labelledby="appliedViewTitle"><div class="view-intro"><div><div class="eyebrow">Workspace / Applications</div><h2 id="appliedViewTitle">Applications</h2><p>See only the progress returned by the application service.</p></div><button class="outline-button" type="button" data-action="refresh-applied"><i class="ti ti-refresh" aria-hidden="true"></i>Refresh</button></div><section class="surface"><div class="panel-head"><div><h3>Auto-applied jobs</h3><p>A-Jent keeps source links and backend notes available.</p></div><span class="panel-note" id="appliedCount">0 records</span></div><div id="appliedContent"></div></section></section>
+
+      <section class="route-view" id="view-log" data-view="log" aria-labelledby="logViewTitle"><div class="view-intro"><div><div class="eyebrow">Workspace / Activity</div><h2 id="logViewTitle">Activity stream</h2><p>Technical details stay available without competing with the work surface.</p></div><span class="live-badge" id="liveBadge">Live stream</span></div><section class="surface log-panel"><div class="log-header"><div class="log-title"><i class="ti ti-terminal-2" aria-hidden="true"></i><h2>A-Jent agent log</h2><span class="panel-note" id="logLineCount">0 lines</span></div><div class="log-actions"><button class="outline-button" type="button" data-action="scroll-log"><i class="ti ti-arrow-down" aria-hidden="true"></i>Bottom</button><button class="outline-button" type="button" data-action="toggle-log-pause" id="logPauseButton">Pause</button></div></div><div class="log-lines-main" id="logLines" aria-live="polite"></div></section></section>
+
+      <section class="route-view" id="view-subscription" data-view="subscription" aria-labelledby="subscriptionViewTitle"><div class="view-intro"><div><div class="eyebrow">Workspace / Account</div><h2 id="subscriptionViewTitle">Subscription</h2><p>Your subscription controls whether A-Jent can deliver notifications for new matches.</p></div><span class="status-badge" id="subscriptionStatusBadge">Checking</span></div><section class="surface subscription-card"><div class="panel-head"><div><h3>Personalized Notification Access</h3><p>Directly linked to your signed-in account — no extra forms needed.</p></div></div><div id="subActiveCard" class="is-hidden"><div class="subscription-summary"><div class="subscription-metric"><span>Subscriber</span><strong id="subActiveEmail">—</strong></div><div class="subscription-metric"><span>Personalized Plan</span><strong id="subActivePlan">Monthly</strong></div><div class="subscription-metric"><span>Rate</span><strong id="subAmount">₹75 / mo</strong></div><div class="subscription-metric"><span>Access Remaining</span><strong id="subDaysLeft">—</strong></div></div><div class="subscription-renew"><div><strong>Active Personalized Subscription</strong><p>Your subscription is active for <span id="subActiveUserLabel">your account</span>. You can extend your coverage anytime.</p></div><button class="primary-button pay-button" id="renewBtn" type="button" data-payment="renew" style="width:auto;min-width:170px;padding:0 24px;">Renew for ₹75/mo</button></div></div><div id="subPaywall" class="subscription-content is-hidden"><div class="subscription-paywall"><div class="modal-icon" aria-hidden="true"><i class="ti ti-route-2"></i></div><h2>Activate A-Jent Subscription</h2><p>Subscribe to unlock automated job notifications. The agent scans connected sources and keeps only the best matches in your workspace.</p><div class="price-badge"><span class="currency">₹</span><span class="amount">75</span><span class="period">/month</span></div><ul class="feature-list"><li>Multiple job sources scanned on schedule</li><li>AI resume matching with a local score</li><li>Optional email, Telegram, or Discord notifications</li><li>Optional auto-apply on supported platforms</li></ul><div class="user-account-preview" style="display:flex;align-items:center;justify-content:center;gap:12px;margin:16px auto;padding:12px 18px;background:var(--surface-mint);border:1px solid #cfe5d7;border-radius:var(--radius-md);max-width:380px;"><span class="avatar" id="subPaywallAvatar" style="width:34px;height:34px;font-size:14px;border-radius:50%;display:grid;place-items:center;background:var(--mint-deep);color:#fff;font-weight:700;">A</span><div style="text-align:left;"><strong id="subPaywallUserName" style="display:block;font-size:13px;color:var(--ink);">Your Account</strong><span id="subPaywallUserEmail" style="display:block;font-size:11px;color:var(--muted);font-family:var(--font-mono);">user@example.com</span></div></div><button class="primary-button pay-button" id="payBtn" type="button" data-payment="subscribe" style="max-width:380px;margin:0 auto;">Pay ₹75 &amp; Activate Subscription</button><p class="payment-footnote">Secured by Cashfree Payments · UPI, Cards, Netbanking accepted<br />Linked directly to your signed-in account · Cancel anytime.</p></div></div><div id="subLoading" class="empty-state"><div><i class="ti ti-loader-2" aria-hidden="true"></i><h3>Checking subscription status…</h3><p>A-Jent is reading your personalized subscription details.</p></div></div><div class="subscription-warning is-hidden" id="subAlertBanner">When a subscription is inactive, A-Jent keeps your jobs and resume available but pauses notification delivery until a new payment is confirmed.</div></section></section>
+
+      <section class="route-view placeholder-view" id="view-profile" data-view="profile"></section>
+      <section class="route-view placeholder-view" id="view-coaching" data-view="coaching"></section>
+      <section class="route-view placeholder-view" id="view-interview" data-view="interview"></section>
+      <section class="route-view placeholder-view" id="view-notifications" data-view="notifications"></section>
+      <section class="route-view placeholder-view" id="view-help" data-view="help"></section>
+      <section class="route-view placeholder-view" id="view-settings" data-view="settings"></section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/dashboard.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+# Environment variables and credentials
+.env
+*.env
+
+# User data & resumes
+resume.pdf
+resume.docx
+resume.doc
+seen_jobs.json
+applied_jobs.json
+subscriptions.json
+users.json
+uploads/
+
+# Logs & Browser profiles
+log/
+*.log
+browser_data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Python & virtualenv
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+*.csv
+APIKey.csv
+
+# Local OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
