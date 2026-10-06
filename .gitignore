@@ -1,8 +1,12 @@
 # Environment variables and credentials
 .env
-*.env
+.env.*
+!.env.example
+*.pem
+*.key
+.flask_secret
 
-# User data & resumes
+# User data, resumes, and runtime state
 resume.pdf
 resume.docx
 resume.doc
@@ -11,8 +15,10 @@ applied_jobs.json
 subscriptions.json
 users.json
 uploads/
+*.csv
+APIKey.csv
 
-# Logs & Browser profiles
+# Local databases, logs, and browser runtime
 log/
 *.log
 browser_data/
@@ -20,17 +26,29 @@ browser_data/
 *.sqlite
 *.sqlite3
 
-# Python & virtualenv
+# Python bytecode and virtual environments
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .venv/
 venv/
-.pytest_cache/
+env/
+ENV/
 
-*.csv
-APIKey.csv
-
-# Local OS and editor files
+# Generated, build, and scratch files
+dist/
+build/
+*.egg-info/
+*.tmp
+*.temp
+scratch/
 .DS_Store
 Thumbs.db
+
+# IDE and tooling local configuration
 .vscode/
+.idea/
+.kombai/

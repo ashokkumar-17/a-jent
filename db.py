@@ -52,6 +52,7 @@ def _setup_indexes():
         _db.applied_jobs.create_index([('user_id', 1), ('job_id', 1)], unique=True)
         _db.cycle_stats.create_index('timestamp')
         _db.user_profiles.create_index('user_id', unique=True)
+        _db.users.create_index('user_id', unique=True, sparse=True)
     except Exception as e:
         log.warning(f'[DB] Error creating index: {e}')
 
@@ -335,11 +336,73 @@ def save_user_profile(profile_data: dict, user_id: str = None):
 
 # ── Multi-Tenant SaaS User Authentication & Subscriber Helpers ───────────────
 
+import hmac
 import hashlib, secrets
+import argon2
+from argon2 import PasswordHasher
+
+# Standard OWASP / RFC 9106 Argon2id parameters
+ARGON2_TIME_COST = int(os.environ.get('ARGON2_TIME_COST', 3))
+ARGON2_MEMORY_COST = int(os.environ.get('ARGON2_MEMORY_COST', 65536))
+ARGON2_PARALLELISM = int(os.environ.get('ARGON2_PARALLELISM', 4))
+ARGON2_HASH_LEN = int(os.environ.get('ARGON2_HASH_LEN', 32))
+ARGON2_SALT_LEN = int(os.environ.get('ARGON2_SALT_LEN', 16))
+
+_hasher = PasswordHasher(
+    time_cost=ARGON2_TIME_COST,
+    memory_cost=ARGON2_MEMORY_COST,
+    parallelism=ARGON2_PARALLELISM,
+    hash_len=ARGON2_HASH_LEN,
+    salt_len=ARGON2_SALT_LEN,
+    type=argon2.Type.ID,
+)
+
+# Precomputed dummy Argon2id hash to mitigate timing side channels for non-existent users
+_DUMMY_ARGON2_HASH = _hasher.hash("dummy_protection_password_only")
 
 USERS_FILE = BASE_DIR / 'users.json'
 
+def is_argon2_hash(hash_str: str) -> bool:
+    """Check if a hash string begins with an Argon2 identifier."""
+    if not hash_str or not isinstance(hash_str, str):
+        return False
+    return hash_str.startswith('$argon2id$') or hash_str.startswith('$argon2')
+
+def hash_password(password: str) -> str:
+    """Hash a plaintext password using Argon2id with standard parameters."""
+    if not password or not isinstance(password, str):
+        raise ValueError("Password must be a non-empty string.")
+    return _hasher.hash(password)
+
+def _verify_legacy_sha256(stored_hash: str, password: str, salt: str = None) -> bool:
+    """Verify legacy salted SHA-256 hash using constant-time comparison."""
+    if not stored_hash or not salt:
+        return False
+    expected = hashlib.sha256((password + salt).encode('utf-8')).hexdigest()
+    return hmac.compare_digest(expected, stored_hash)
+
+def verify_password(stored_hash: str, password: str, salt: str = None) -> bool:
+    """Verify plaintext password against stored hash using constant-time comparison.
+    
+    Supports modern Argon2id hashes and legacy salted SHA-256 hashes.
+    Fails safely on invalid or malformed hashes.
+    """
+    if not stored_hash or not password:
+        return False
+    try:
+        if is_argon2_hash(stored_hash):
+            return _hasher.verify(stored_hash, password)
+        if salt:
+            return _verify_legacy_sha256(stored_hash, password, salt)
+        return False
+    except (argon2.exceptions.VerifyMismatchError, argon2.exceptions.VerificationError, argon2.exceptions.InvalidHashError):
+        return False
+    except Exception as e:
+        log.warning(f"[DB] Password verification failed safely with error: {e}")
+        return False
+
 def _hash_password(password: str, salt: str = None) -> tuple:
+    """Legacy salted SHA-256 hash function (deprecated, kept for backward compatibility)."""
     if not salt:
         salt = secrets.token_hex(16)
     hashed = hashlib.sha256((password + salt).encode('utf-8')).hexdigest()
@@ -368,7 +431,10 @@ def save_user(user_doc: dict):
         return
     if is_mongodb_connected():
         try:
-            _db.users.update_one({'email': email}, {'$set': user_doc}, upsert=True)
+            update_spec = {'$set': user_doc}
+            if 'salt' not in user_doc:
+                update_spec['$unset'] = {'salt': ''}
+            _db.users.update_one({'email': email}, update_spec, upsert=True)
         except Exception as e:
             log.warning(f'[DB] MongoDB save_user error: {e}')
     users = load_users()
@@ -379,20 +445,43 @@ def save_user(user_doc: dict):
     except Exception as e:
         log.warning(f'[DB] Save users.json error: {e}')
 
+def _user_id_exists(user_id: str) -> bool:
+    """Check whether a user_id is already assigned in MongoDB or local storage."""
+    if is_mongodb_connected():
+        try:
+            if _db.users.find_one({'user_id': user_id}, {'_id': 1}):
+                return True
+        except Exception:
+            pass
+    users = load_users()
+    return any(u.get('user_id') == user_id for u in users.values())
+
+def generate_user_id() -> str:
+    """Generate a cryptographically random, collision-free user ID.
+
+    Format: usr_<24 random hex characters> (96 bits of entropy from secrets.token_hex(12)).
+    Guarantees uniqueness by checking existing user records in MongoDB and local storage.
+    Does NOT use email, timestamps, or sequential numbers.
+    """
+    for _ in range(10):
+        candidate = f"usr_{secrets.token_hex(12)}"
+        if not _user_id_exists(candidate):
+            return candidate
+    return f"usr_{secrets.token_hex(16)}"
+
 def create_user(email: str, password: str, name: str = '') -> dict | None:
     email = email.strip().lower()
     users = load_users()
     if email in users:
         return None  # Email already registered
-    hashed_pwd, salt = _hash_password(password)
-    user_id = f"usr_{hashlib.md5(email.encode()).hexdigest()[:12]}"
+    hashed_pwd = hash_password(password)
+    user_id = generate_user_id()
     now = datetime.now(timezone.utc)
     user_doc = {
         'user_id': user_id,
         'email': email,
         'name': name or email.split('@')[0],
         'password_hash': hashed_pwd,
-        'salt': salt,
         'created_at': now.isoformat(),
         'subscription_status': 'trial',
         'plan': 'trial',
@@ -407,11 +496,35 @@ def authenticate_user(email: str, password: str) -> dict | None:
     users = load_users()
     user = users.get(email)
     if not user:
+        # Mitigate user enumeration timing discrepancies
+        try:
+            _hasher.verify(_DUMMY_ARGON2_HASH, password)
+        except Exception:
+            pass
         return None
-    hashed, _ = _hash_password(password, user.get('salt', ''))
-    if hashed == user.get('password_hash'):
-        return user
-    return None
+
+    stored_hash = user.get('password_hash', '')
+    salt = user.get('salt')
+
+    if not verify_password(stored_hash, password, salt=salt):
+        return None
+
+    # Migration-on-login: If user has a legacy SHA-256 hash or hash needs rehash
+    if not is_argon2_hash(stored_hash) or _hasher.check_needs_rehash(stored_hash):
+        try:
+            new_hash = hash_password(password)
+            user_to_save = dict(user)
+            user_to_save['password_hash'] = new_hash
+            user_to_save.pop('salt', None)
+            save_user(user_to_save)
+            # Update in-memory user document
+            user['password_hash'] = new_hash
+            user.pop('salt', None)
+            log.info(f"[DB] Upgraded password hash to Argon2id for user {user.get('user_id')}")
+        except Exception as e:
+            log.warning(f"[DB] Failed to upgrade password hash to Argon2id: {e}")
+
+    return user
 
 def get_all_subscribers() -> list:
     """Return all users with active subscriptions or active trial profiles."""

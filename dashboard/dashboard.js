@@ -124,7 +124,36 @@ function showToast(message, isError = false) {
   state.toastTimer = window.setTimeout(() => toast.classList.remove('is-visible'), 3200);
 }
 
+function getCookie(name) {
+  const match = document.cookie.match(new RegExp('(?:^|;\\s*)' + name.replace(/[-.\\+*?[\\]^$(){}|=!<>:-]/g, '\\$&') + '=([^;]*)'));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+async function getCsrfToken() {
+  let token = getCookie('csrf_token');
+  if (!token) {
+    try {
+      const res = await fetch('/api/csrf-token');
+      const data = await res.json();
+      token = data?.csrf_token;
+    } catch (_) {}
+  }
+  return token;
+}
+
 async function fetchJSON(url, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+    const token = await getCsrfToken();
+    if (token) {
+      if (!options.headers) options.headers = {};
+      if (options.headers instanceof Headers) {
+        options.headers.set('X-CSRFToken', token);
+      } else {
+        options.headers['X-CSRFToken'] = token;
+      }
+    }
+  }
   const response = await fetch(url, options);
   const payload = await response.json().catch(() => null);
   if (!response.ok) throw new ApiError(payload?.error || `HTTP ${response.status}`, response.status);
@@ -741,6 +770,11 @@ function renderResumeStatus() {
     badge.textContent = 'No document';
     badge.className = 'status-badge neutral';
     $('#resumeStatus').innerHTML = '<div class="empty-state"><div><i class="ti ti-file-off" aria-hidden="true"></i><h3>No current resume returned</h3><p>Upload a PDF, DOCX, or DOC to give A-Jent a comparison source.</p></div></div>';
+    const uploadResultEl = $('#uploadResult');
+    if (uploadResultEl) {
+      uploadResultEl.innerHTML = '';
+      uploadResultEl.className = 'upload-result';
+    }
   } else {
     badge.textContent = 'Primary Resume';
     badge.className = 'status-badge';
@@ -762,6 +796,10 @@ function renderResumeStatus() {
         <span><i class="ti ti-circle-check" aria-hidden="true"></i>Source of truth for AI Agent job matching &amp; auto-apply.</span>
         <span class="mono">${esc(info.modified ? formatDate(info.modified) : '')}</span>
       </div>`;
+    const uploadResultEl = $('#uploadResult');
+    if (uploadResultEl && uploadResultEl.children.length === 0) {
+      renderSearchTrigger(uploadResultEl, false);
+    }
   }
 
   const listEl = $('#uploadedResumesList');
@@ -863,6 +901,135 @@ async function deleteResume(resumeId, resumeName) {
 }
 
 
+let _searchPollInterval = null;
+
+function renderSearchTrigger(container, isFreshUpload = false) {
+  if (!container) return;
+  const headerText = isFreshUpload ? '✓ Resume uploaded successfully' : '✓ Primary resume ready';
+  const subText = 'Your resume is ready for job matching.';
+  container.className = 'upload-result success';
+  container.innerHTML = `
+    <div class="upload-confirm-box">
+      <div class="upload-confirm-header">
+        <i class="ti ti-circle-check" aria-hidden="true"></i>
+        <strong>${headerText}</strong>
+      </div>
+      <p class="upload-confirm-subtext">${subText}</p>
+      <div class="search-trigger-actions">
+        <button class="primary-button start-search-btn" id="startSearchBtn" type="button">
+          🚀 Start Job Search
+        </button>
+      </div>
+      <div class="search-status-banner is-hidden" id="searchTriggerStatus" role="status"></div>
+    </div>
+  `;
+  const startBtn = $('#startSearchBtn');
+  if (startBtn) {
+    startBtn.addEventListener('click', handleStartSearch);
+  }
+}
+
+async function handleStartSearch() {
+  const btn = $('#startSearchBtn');
+  const statusEl = $('#searchTriggerStatus');
+  if (!btn) return;
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Starting Job Search...';
+
+  if (statusEl) {
+    statusEl.className = 'search-status-banner is-hidden';
+    statusEl.textContent = '';
+  }
+
+  try {
+    const token = await getCsrfToken();
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['X-CSRFToken'] = token;
+
+    const response = await fetch('/api/start-search', {
+      method: 'POST',
+      headers,
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok || !data.success) {
+      const errMsg = data.message || data.error || 'Unable to start job search. Please try again.';
+      throw new Error(errMsg);
+    }
+
+    if (statusEl) {
+      statusEl.className = 'search-status-banner running';
+      statusEl.innerHTML = `
+        <div class="search-status-header">
+          <i class="ti ti-search" aria-hidden="true"></i>
+          <strong>🔎 Job search started</strong>
+        </div>
+        <p>A-Jent is now searching for matching jobs.</p>
+      `;
+      statusEl.classList.remove('is-hidden');
+    }
+    btn.textContent = '🔎 Job Search Running...';
+    btn.disabled = true;
+    showToast('Job search started');
+
+    pollSearchStatus();
+  } catch (error) {
+    if (statusEl) {
+      statusEl.className = 'search-status-banner error';
+      statusEl.innerHTML = `
+        <div class="search-status-header">
+          <i class="ti ti-alert-triangle" aria-hidden="true"></i>
+          <strong>⚠ Unable to start job search.</strong>
+        </div>
+        <p>${esc(error.message || 'Please try again.')}</p>
+      `;
+      statusEl.classList.remove('is-hidden');
+    }
+    btn.disabled = false;
+    btn.textContent = '🚀 Start Job Search';
+    showToast(error.message || 'Unable to start job search', true);
+  }
+}
+
+function pollSearchStatus() {
+  if (_searchPollInterval) clearInterval(_searchPollInterval);
+  let pollAttempts = 0;
+  const maxAttempts = 30;
+
+  _searchPollInterval = setInterval(async () => {
+    pollAttempts++;
+    try {
+      const res = await fetch('/api/search-status');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.running || pollAttempts >= maxAttempts) {
+        clearInterval(_searchPollInterval);
+        _searchPollInterval = null;
+        const btn = $('#startSearchBtn');
+        const statusEl = $('#searchTriggerStatus');
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '🚀 Start Job Search';
+        }
+        if (statusEl && !data.running) {
+          statusEl.className = 'search-status-banner running';
+          statusEl.innerHTML = `
+            <div class="search-status-header">
+              <i class="ti ti-circle-check" aria-hidden="true"></i>
+              <strong>✓ Job search completed</strong>
+            </div>
+            <p>A-Jent has completed matching roles against your resume.</p>
+          `;
+        }
+        loadAll();
+      }
+    } catch (e) {
+      // Ignore polling errors
+    }
+  }, 3000);
+}
+
 async function uploadResume(file) {
   if (!file) return;
   const result = $('#uploadResult');
@@ -871,11 +1038,13 @@ async function uploadResume(file) {
   try {
     const form = new FormData();
     form.append('file', file);
-    const response = await fetch('/api/upload-resume', { method: 'POST', body: form });
+    const token = await getCsrfToken();
+    const headers = {};
+    if (token) headers['X-CSRFToken'] = token;
+    const response = await fetch('/api/upload-resume', { method: 'POST', headers, body: form });
     const data = await response.json();
     if (!response.ok || !data.success) throw new ApiError(data.error || `HTTP ${response.status}`, response.status);
-    result.className = 'upload-result success';
-    result.textContent = `✓ ${data.filename} uploaded (${data.size_kb} KB). ${data.message || 'Resume saved.'}`;
+    renderSearchTrigger(result, true);
     await loadResumeStatus();
     showToast('Resume uploaded');
   } catch (error) {

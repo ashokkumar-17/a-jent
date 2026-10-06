@@ -17,9 +17,16 @@ import hashlib
 import uuid
 import calendar
 import time
+import secrets
+import threading
+from functools import wraps
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from flask import Flask, jsonify, send_from_directory, request, redirect, Response, stream_with_context
+from flask import Flask, jsonify, send_from_directory, request, redirect, Response, stream_with_context, session, g
+from flask_wtf.csrf import CSRFProtect, generate_csrf, CSRFError
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_limiter.errors import RateLimitExceeded
 
 BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__))).parent
 SEEN_JOBS_FILE = BASE_DIR / "seen_jobs.json"
@@ -68,6 +75,128 @@ _CF_JS = (
 
 app = Flask(__name__, static_folder=str(DASHBOARD_DIR), static_url_path="")
 
+# ── Session & Security Configuration ──────────────────────────────────────────
+def _get_secret_key() -> str:
+    env_secret = os.environ.get("SECRET_KEY") or os.environ.get("FLASK_SECRET_KEY")
+    if env_secret and env_secret.strip():
+        return env_secret.strip()
+    cfg_secret = _cfg.get("secret_key")
+    if cfg_secret and str(cfg_secret).strip():
+        return str(cfg_secret).strip()
+    is_prod = (
+        os.environ.get("FLASK_ENV") == "production"
+        or os.environ.get("ENV") == "production"
+        or str(os.environ.get("PRODUCTION", "false")).lower() == "true"
+    )
+    if is_prod:
+        raise RuntimeError("SECRET_KEY environment variable is required in production.")
+
+    secret_file = BASE_DIR / ".flask_secret"
+    if secret_file.exists():
+        try:
+            stored = secret_file.read_text(encoding="utf-8").strip()
+            if stored:
+                return stored
+        except Exception:
+            pass
+    generated = secrets.token_hex(32)
+    try:
+        secret_file.write_text(generated, encoding="utf-8")
+    except Exception:
+        pass
+    return generated
+
+IS_PRODUCTION = (
+    os.environ.get("FLASK_ENV") == "production"
+    or os.environ.get("ENV") == "production"
+    or str(os.environ.get("PRODUCTION", "false")).lower() == "true"
+)
+
+# ── Reverse Proxy / Client IP Handling ────────────────────────────────────────
+# Do NOT blindly trust X-Forwarded-For headers from arbitrary clients.
+# When running behind trusted reverse proxies (e.g. Nginx, Cloudflare, AWS ALB), set NUM_PROXIES
+# to the number of upstream proxy hops.
+NUM_PROXIES = int(os.environ.get("NUM_PROXIES") or os.environ.get("PROXY_FIX_NUM_PROXIES") or _gcfg("num_proxies", 0))
+if NUM_PROXIES > 0:
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app,
+        x_for=NUM_PROXIES,
+        x_proto=NUM_PROXIES,
+        x_host=NUM_PROXIES,
+        x_prefix=NUM_PROXIES
+    )
+
+SESSION_COOKIE_SECURE_CFG = (
+    str(os.environ.get("SESSION_COOKIE_SECURE", "true" if IS_PRODUCTION else "false")).lower() == "true"
+)
+
+# ── Rate Limiting Storage & Policy Configuration ──────────────────────────────
+RATELIMIT_STORAGE_URI = (
+    os.environ.get("RATELIMIT_STORAGE_URI")
+    or _gcfg("ratelimit_storage_uri", "memory://")
+)
+
+app.config.update(
+    SECRET_KEY=_get_secret_key(),
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=SESSION_COOKIE_SECURE_CFG,
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    WTF_CSRF_TIME_LIMIT=None,
+    WTF_CSRF_CHECK_DEFAULT=True,
+    RATELIMIT_STORAGE_URI=RATELIMIT_STORAGE_URI,
+    RATELIMIT_ENABLED=str(os.environ.get("RATELIMIT_ENABLED", "true")).lower() == "true",
+    RATELIMIT_LOGIN_IP=os.environ.get("RATELIMIT_LOGIN_IP") or _gcfg("ratelimit_login_ip", "10/minute"),
+    RATELIMIT_LOGIN_EMAIL=os.environ.get("RATELIMIT_LOGIN_EMAIL") or _gcfg("ratelimit_login_email", "5/minute"),
+    RATELIMIT_REGISTER_IP=os.environ.get("RATELIMIT_REGISTER_IP") or _gcfg("ratelimit_register_ip", "5/hour"),
+)
+
+if RATELIMIT_STORAGE_URI.startswith("memory://") and IS_PRODUCTION:
+    import logging
+    logging.getLogger("werkzeug").warning(
+        "[SECURITY WARNING] Rate limiter is using memory:// storage backend in production. "
+        "For multi-worker deployments (e.g. Gunicorn/uWSGI), configure RATELIMIT_STORAGE_URI "
+        "with a shared backend like Redis (e.g., redis://localhost:6379/0)."
+    )
+
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    storage_uri=app.config["RATELIMIT_STORAGE_URI"],
+    default_limits=[],
+)
+
+csrf = CSRFProtect(app)
+
+@app.errorhandler(CSRFError)
+def handle_csrf_error(e):
+    return jsonify({"error": f"CSRF validation failed: {e.description}"}), 400
+
+@app.errorhandler(RateLimitExceeded)
+def handle_rate_limit_exceeded(e):
+    return jsonify({"error": "Too many requests. Please try again later."}), 429
+
+@app.after_request
+def inject_csrf_cookie(response):
+    try:
+        token = generate_csrf()
+        response.set_cookie(
+            "csrf_token",
+            token,
+            samesite="Lax",
+            secure=app.config["SESSION_COOKIE_SECURE"],
+            httponly=False,
+            path="/",
+        )
+    except Exception:
+        pass
+    return response
+
+@app.route("/api/csrf-token")
+def api_csrf_token():
+    return jsonify({"csrf_token": generate_csrf()})
+
 import requests as _requests   # for Cashfree API calls
 
 import sys
@@ -106,7 +235,7 @@ def _backfill_subscribers():
         existing = users.get(email, {})
         if existing.get("subscription_status") == "active":
             continue
-        user_id = existing.get("user_id") or f"usr_{_hl.md5(email.encode()).hexdigest()[:12]}"
+        user_id = existing.get("user_id") or db.generate_user_id()
         plan = sub.get("plan", "monthly")
         user_doc = {
             **existing,
@@ -211,26 +340,31 @@ def _cf_headers() -> dict:
 
 
 
-# -- Authentication API Routes ------------------------------------------------
+# -- Authentication API Routes & Session Helpers -----------------------------
 
-SESSION_MAX_AGE = 86400 * 30
-
-
-def _request_user_id():
-    return (
-        request.cookies.get("a_jent_user_id")
-        or request.cookies.get("jent_user_id")
-        or request.headers.get("X-User-Id")
-        or request.args.get("user_id")
-    )
-
-
-def _find_session_user():
-    uid = _request_user_id()
+def get_current_user() -> dict | None:
+    """Retrieve current authenticated user strictly from the validated Flask session."""
+    if hasattr(g, "_authenticated_user"):
+        return g._authenticated_user
+    uid = session.get("user_id")
     if not uid:
+        g._authenticated_user = None
         return None
     users = db.load_users()
-    return next((user for user in users.values() if user.get("user_id") == uid), None)
+    user = next((u for u in users.values() if u.get("user_id") == uid), None)
+    g._authenticated_user = user
+    return user
+
+
+def _get_current_user_id() -> str | None:
+    """Return user_id of current authenticated user strictly from session, or None."""
+    user = get_current_user()
+    return user["user_id"] if user else None
+
+
+def _find_session_user() -> dict | None:
+    """Backward-compatible helper: retrieve authenticated user only from session."""
+    return get_current_user()
 
 
 def _public_user(user: dict) -> dict:
@@ -243,20 +377,58 @@ def _public_user(user: dict) -> dict:
     }
 
 
-def _set_session_cookie(response, user_id: str):
-    response.set_cookie(
-        "a_jent_user_id",
-        user_id,
-        max_age=SESSION_MAX_AGE,
-        httponly=True,
-        samesite="Lax",
-        secure=request.is_secure,
-        path="/",
-    )
-    return response
+def login_required(f):
+    """Decorator: ensure request is authenticated via validated session.
+
+    Rejects unauthenticated requests without exposing data:
+    - API/JSON requests return a 401 JSON error.
+    - Browser page requests redirect to the login page ('/').
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        user = get_current_user()
+        if not user:
+            if request.path.startswith("/api/") or request.is_json or request.accept_mimetypes.best == "application/json":
+                return jsonify({"error": "Authentication required. Please log in."}), 401
+            return redirect("/")
+        return f(*args, **kwargs)
+    return decorated
+
+
+# Reusable alias for protected routes
+require_auth = login_required
+
+
+# ── Rate Limiting Key Functions & Dynamic Limit Callables ─────────────────────
+
+def _get_login_email_key() -> str:
+    """Extract email for account-based rate limiting to prevent distributed brute-force attacks.
+    Falls back to remote IP if email is absent, ensuring rate-limiting applies.
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        email = (body.get("email") or "").strip().lower()
+        if email:
+            return f"email:{email}"
+    except Exception:
+        pass
+    return f"ip:{get_remote_address()}"
+
+
+def _login_ip_limit():
+    return app.config.get("RATELIMIT_LOGIN_IP", "10/minute")
+
+
+def _login_email_limit():
+    return app.config.get("RATELIMIT_LOGIN_EMAIL", "5/minute")
+
+
+def _register_ip_limit():
+    return app.config.get("RATELIMIT_REGISTER_IP", "5/hour")
 
 
 @app.route("/api/auth/register", methods=["POST"])
+@limiter.limit(_register_ip_limit, key_func=get_remote_address)
 def api_auth_register():
     body = request.get_json(force=True) or {}
     email    = (body.get("email") or "").strip().lower()
@@ -272,11 +444,16 @@ def api_auth_register():
     if not user:
         return jsonify({"error": "Email is already registered. Please login instead."}), 400
 
-    res = jsonify({"success": True, "authenticated": True, "user": _public_user(user)})
-    return _set_session_cookie(res, user["user_id"])
+    session.clear()
+    session["user_id"] = user["user_id"]
+    session.permanent = True
+
+    return jsonify({"success": True, "authenticated": True, "user": _public_user(user)})
 
 
 @app.route("/api/auth/login", methods=["POST"])
+@limiter.limit(_login_ip_limit, key_func=get_remote_address)
+@limiter.limit(_login_email_limit, key_func=_get_login_email_key)
 def api_auth_login():
     body = request.get_json(force=True) or {}
     email    = (body.get("email") or "").strip().lower()
@@ -286,48 +463,31 @@ def api_auth_login():
     if not user:
         return jsonify({"error": "Invalid email or password"}), 401
 
-    res = jsonify({"success": True, "authenticated": True, "user": _public_user(user)})
-    return _set_session_cookie(res, user["user_id"])
+    session.clear()
+    session["user_id"] = user["user_id"]
+    session.permanent = True
+
+    return jsonify({"success": True, "authenticated": True, "user": _public_user(user)})
 
 
 @app.route("/api/auth/me")
+@login_required
 def api_auth_me():
-    user = _find_session_user()
-    if not user:
-        return jsonify({"authenticated": False, "user": None, "error": "Authentication required."}), 401
+    user = get_current_user()
     profile = db.get_user_profile(user["user_id"])
     return jsonify({"authenticated": True, "user": _public_user(user), "profile": profile})
 
 
 @app.route("/api/auth/logout", methods=["POST"])
 def api_auth_logout():
+    session.clear()
     response = jsonify({"success": True, "authenticated": False})
     response.delete_cookie("a_jent_user_id", path="/")
     response.delete_cookie("jent_user_id", path="/")
     return response
 
 
-# -- Auth middleware -----------------------------------------------------------
-
-from functools import wraps
-
-def require_auth(f):
-    """Decorator: reject requests with no valid a_jent_user_id / jent_user_id cookie/header."""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        uid = _request_user_id()
-        if not uid:
-            return jsonify({"error": "Authentication required. Please log in."}), 401
-        if not _find_session_user():
-            return jsonify({"error": "Invalid session. Please log in again."}), 401
-        return f(*args, **kwargs)
-    return decorated
-
-
 # -- API Routes ---------------------------------------------------------------
-
-def _get_current_user_id():
-    return _request_user_id() or db.DEFAULT_USER_ID
 
 @app.route("/api/jobs")
 @require_auth
@@ -470,7 +630,7 @@ def api_subscribe_email():
     import hashlib as _hl
     users = db.load_users()
     existing = users.get(email, {})
-    user_id = existing.get("user_id") or f"usr_{_hl.md5(email.encode()).hexdigest()[:12]}"
+    user_id = existing.get("user_id") or db.generate_user_id()
     user_doc = {
         **existing,
         "user_id": user_id,
@@ -501,16 +661,9 @@ def api_health():
 # -- Subscription API Routes --------------------------------------------------
 
 @app.route("/api/subscription-status")
+@login_required
 def api_subscription_status():
-    user = _find_session_user()
-    if not user:
-        return jsonify({
-            "authenticated": False,
-            "active": False,
-            "amount": SUBSCRIPTION_AMT,
-            "subscription_required": SUBSCRIPTION_REQ,
-            "message": "Log in to view your personalized subscription.",
-        })
+    user = get_current_user()
 
     status = user.get("subscription_status", "inactive")
     plan = user.get("plan", "trial")
@@ -564,12 +717,27 @@ def api_subscription_status():
     })
 
 
+ALLOWED_SUBSCRIPTION_PLANS = {"monthly", "trial", "notify", "dev"}
+
+
 @app.route("/api/create-order", methods=["POST"])
+@login_required
 def api_create_order():
     """Create a Cashfree order or simulated activation for the authenticated session user."""
-    user = _find_session_user()
+    user = get_current_user()
     if not user:
-        return jsonify({"error": "Authentication required. Please log in first."}), 401
+        return jsonify({"error": "Authentication required"}), 401
+
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "Invalid request body"}), 400
+
+    # Validate plan if requested
+    req_plan = body.get("plan", "monthly")
+    if req_plan and req_plan not in ALLOWED_SUBSCRIPTION_PLANS:
+        return jsonify({
+            "error": f"Invalid plan requested: {req_plan}. Allowed plans: {', '.join(sorted(ALLOWED_SUBSCRIPTION_PLANS))}"
+        }), 400
 
     customer_name = (user.get("name") or "").strip() or user["email"].split("@")[0]
     customer_email = user["email"].strip().lower()
@@ -577,8 +745,9 @@ def api_create_order():
 
     order_id = f"a_jent_{user_id}_{uuid.uuid4().hex[:6]}"
 
-    # If Cashfree credentials are missing or placeholder, provide a seamless simulated activation for testing
-    if not CASHFREE_APP_ID or not CASHFREE_SECRET or "YOUR_CASHFREE" in CASHFREE_APP_ID:
+    # Prototype Activation:
+    # If Cashfree credentials are missing, placeholder, or simulation requested, provide seamless activation
+    if not CASHFREE_APP_ID or not CASHFREE_SECRET or "YOUR_CASHFREE" in CASHFREE_APP_ID or body.get("simulate"):
         _activate_subscription(
             email=customer_email,
             name=customer_name,
@@ -586,16 +755,21 @@ def api_create_order():
             payment_id=f"sim_{uuid.uuid4().hex[:8]}",
             amount=SUBSCRIPTION_AMT,
             user_id=user_id,
+            plan=req_plan,
         )
         return jsonify({
             "success": True,
             "simulated": True,
             "message": f"Personalized subscription activated for {customer_email}!",
             "order_id": order_id,
+            "plan": req_plan,
         })
 
-    body = request.get_json(force=True) or {}
-    customer_phone = (body.get("phone") or "").strip() or "9999999999"
+    raw_phone = (body.get("phone") or "").strip() or "9999999999"
+    customer_phone = "".join(c for c in raw_phone if c.isdigit())
+    if len(customer_phone) < 10:
+        customer_phone = "9999999999"
+
     return_url = request.host_url.rstrip("/") + f"/api/payment-success?order_id={order_id}&email={customer_email}"
 
     payload = {
@@ -631,53 +805,85 @@ def api_create_order():
             "env": CASHFREE_ENV,
         })
     except Exception as e:
-        return jsonify({"error": f"Cashfree order creation failed: {e}"}), 500
+        import logging
+        logging.getLogger("dashboard").warning("[Payment] Cashfree order creation error: %s", type(e).__name__)
+        return jsonify({"error": "Payment order creation failed. Please try again later."}), 502
 
 
 @app.route("/api/payment-success")
 def api_payment_success():
     """Cashfree redirects here after payment. Verify and activate subscription."""
-    order_id = request.args.get("order_id", "")
-    email    = request.args.get("email", "")
+    order_id = (request.args.get("order_id") or "").strip()
+    email    = (request.args.get("email") or "").strip().lower()
 
     activated = False
-    if order_id and CASHFREE_APP_ID:
+    if order_id and CASHFREE_APP_ID and "YOUR_CASHFREE" not in CASHFREE_APP_ID:
         try:
-            resp = _requests.get(
-                f"{_CF_BASE}/orders/{order_id}",
-                headers=_cf_headers(),
-                timeout=15,
-            )
-            resp.raise_for_status()
-            order_data = resp.json()
-            status = order_data.get("order_status", "")
-            if status == "PAID":
-                payments = order_data.get("order_payment_details", {})
-                payment_id = str(payments.get("payment_id", order_id))
-                _activate_subscription(
-                    email=email,
-                    name=order_data.get("customer_details", {}).get("customer_name", ""),
-                    order_id=order_id,
-                    payment_id=payment_id,
-                    amount=SUBSCRIPTION_AMT,
+            if order_id.replace("_", "").replace("-", "").isalnum() and len(order_id) <= 100:
+                resp = _requests.get(
+                    f"{_CF_BASE}/orders/{order_id}",
+                    headers=_cf_headers(),
+                    timeout=15,
                 )
-                activated = True
-        except Exception:
-            pass
+                resp.raise_for_status()
+                order_data = resp.json()
+                status = order_data.get("order_status", "")
+                if status == "PAID":
+                    payments = order_data.get("order_payment_details", {})
+                    payment_id = str(payments.get("payment_id", order_id))
+                    customer = order_data.get("customer_details", {})
+                    _activate_subscription(
+                        email=email or customer.get("customer_email", ""),
+                        name=customer.get("customer_name", ""),
+                        order_id=order_id,
+                        payment_id=payment_id,
+                        amount=SUBSCRIPTION_AMT,
+                    )
+                    activated = True
+        except Exception as e:
+            import logging
+            logging.getLogger("dashboard").warning("[Payment] Cashfree payment-success error: %s", type(e).__name__)
 
     # Redirect back to dashboard with status param
     return redirect(f"/?sub={'success' if activated else 'pending'}")
 
 
 @app.route("/api/verify-payment", methods=["POST"])
+@login_required
 def api_verify_payment():
-    """Frontend calls this to verify an order and activate subscription."""
-    body = request.get_json(force=True) or {}
-    order_id = body.get("order_id", "")
-    email    = body.get("email", "")
+    """Verify an order and activate subscription for the authenticated session user."""
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Authentication required"}), 401
 
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "Invalid request body"}), 400
+
+    order_id = (body.get("order_id") or "").strip()
     if not order_id:
         return jsonify({"error": "order_id required"}), 400
+
+    # Ensure order_id contains safe identifier characters
+    if not order_id.replace("_", "").replace("-", "").isalnum() or len(order_id) > 100:
+        return jsonify({"error": "Invalid order_id format"}), 400
+
+    # Always enforce authenticated user identity
+    customer_email = user["email"].strip().lower()
+    customer_name = (user.get("name") or "").strip() or customer_email.split("@")[0]
+    user_id = user["user_id"]
+
+    # Prototype fallback: simulated activation
+    if not CASHFREE_APP_ID or not CASHFREE_SECRET or "YOUR_CASHFREE" in CASHFREE_APP_ID or order_id.startswith("sim_"):
+        _activate_subscription(
+            email=customer_email,
+            name=customer_name,
+            order_id=order_id,
+            payment_id=f"sim_{uuid.uuid4().hex[:8]}",
+            amount=SUBSCRIPTION_AMT,
+            user_id=user_id,
+        )
+        return jsonify({"success": True, "status": "PAID", "simulated": True})
 
     try:
         resp = _requests.get(
@@ -692,77 +898,120 @@ def api_verify_payment():
         if status == "PAID":
             payments = order_data.get("order_payment_details", {})
             payment_id = str(payments.get("payment_id", order_id))
-            customer  = order_data.get("customer_details", {})
             _activate_subscription(
-                email=email or customer.get("customer_email", ""),
-                name=customer.get("customer_name", ""),
+                email=customer_email,
+                name=customer_name,
                 order_id=order_id,
                 payment_id=payment_id,
                 amount=SUBSCRIPTION_AMT,
+                user_id=user_id,
             )
             return jsonify({"success": True, "status": status})
         return jsonify({"success": False, "status": status})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        import logging
+        logging.getLogger("dashboard").warning("[Payment] Cashfree verify-payment error: %s", type(e).__name__)
+        return jsonify({"error": "Payment verification failed. Please try again later."}), 502
 
 
 @app.route("/api/payment-webhook", methods=["POST"])
+@csrf.exempt
 def api_payment_webhook():
-    """Cashfree server-to-server payment notification."""
+    """Cashfree server-to-server payment notification. Handles payloads safely."""
     try:
-        data = request.get_json(force=True) or {}
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({"status": "error", "message": "Invalid payload format"}), 400
+
         order = data.get("data", {}).get("order", {})
         payment = data.get("data", {}).get("payment", {})
         if payment.get("payment_status") == "SUCCESS":
-            order_id   = order.get("order_id", "")
-            payment_id = payment.get("cf_payment_id", order_id)
+            order_id   = str(order.get("order_id", ""))
+            payment_id = str(payment.get("cf_payment_id", order_id))
             customer   = data.get("data", {}).get("customer_details", {})
-            _activate_subscription(
-                email=customer.get("customer_email", ""),
-                name=customer.get("customer_name", ""),
-                order_id=order_id,
-                payment_id=str(payment_id),
-                amount=SUBSCRIPTION_AMT,
-            )
-    except Exception:
-        pass
+            customer_email = customer.get("customer_email", "").strip().lower()
+            if customer_email:
+                _activate_subscription(
+                    email=customer_email,
+                    name=customer.get("customer_name", ""),
+                    order_id=order_id,
+                    payment_id=payment_id,
+                    amount=SUBSCRIPTION_AMT,
+                )
+    except Exception as e:
+        import logging
+        logging.getLogger("dashboard").warning("[Payment] Webhook processing exception: %s", type(e).__name__)
+        return jsonify({"status": "error", "message": "Webhook processing error"}), 400
     return jsonify({"status": "ok"})
 
 
-def _activate_subscription(email, name, order_id, payment_id, amount, user_id=None):
-    """Write subscriber record to subscriptions.json and sync into users.json with personalized 31-day expiry."""
+def _activate_subscription(email, name, order_id, payment_id, amount, user_id=None, plan="monthly"):
+    """Write subscriber record to subscriptions.json and sync into users.json/MongoDB.
+    
+    Ensures idempotency:
+    - If order_id already exists in subscriptions.json, updates existing record.
+    - Supersedes previous active records for the same email.
+    - Validates plan name and calculates duration.
+    - Preserves user account state and random user_id.
+    """
     subs = load_subscriptions()
     email_clean = (email or "").strip().lower()
+    if not email_clean:
+        return None
+
     now = datetime.now(timezone.utc)
-    for s in subs.get("subscribers", []):
-        if s.get("email", "").lower() == email_clean and s.get("status") == "active":
-            s["status"] = "expired"
-    subs.setdefault("subscribers", []).append({
-        "email": email_clean,
-        "name": name,
-        "order_id": order_id,
-        "payment_id": payment_id,
-        "amount": amount,
-        "subscribed_at": now.isoformat(),
-        "status": "active",
-        "plan": "monthly",
-    })
+    plan_clean = plan if plan in ALLOWED_SUBSCRIPTION_PLANS else "monthly"
+    duration_days = 31 if plan_clean == "monthly" else 7
+
+    subscribers = subs.get("subscribers", [])
+    
+    # Check for existing record with same order_id for idempotency
+    existing_sub = None
+    if order_id:
+        for s in subscribers:
+            if s.get("order_id") == order_id:
+                existing_sub = s
+                break
+
+    if existing_sub:
+        # Idempotent update
+        existing_sub["status"] = "active"
+        existing_sub["plan"] = plan_clean
+        existing_sub["amount"] = amount
+        existing_sub["payment_id"] = payment_id or existing_sub.get("payment_id")
+        existing_sub["updated_at"] = now.isoformat()
+    else:
+        # Supersede old active subscriptions for this email
+        for s in subscribers:
+            if s.get("email", "").lower() == email_clean and s.get("status") == "active":
+                s["status"] = "superseded"
+        subscribers.append({
+            "email": email_clean,
+            "name": name,
+            "order_id": order_id,
+            "payment_id": payment_id,
+            "amount": amount,
+            "subscribed_at": now.isoformat(),
+            "status": "active",
+            "plan": plan_clean,
+        })
+
+    subs["subscribers"] = subscribers
     save_subscriptions(subs)
 
-    # ── Sync into users.json with personalized 31-day expiry ──────────────────
-    import hashlib as _hl
+    # ── Sync into users.json / MongoDB with personalized expiry ──────────────────
     users = db.load_users()
     existing = users.get(email_clean, {})
-    uid = user_id or existing.get("user_id") or f"usr_{_hl.md5(email_clean.encode()).hexdigest()[:12]}"
+    uid = user_id or existing.get("user_id") or db.generate_user_id()
     user_doc = {
         **existing,
         "user_id": uid,
         "email": email_clean,
         "name": name or existing.get("name") or email_clean.split("@")[0],
         "subscription_status": "active",
-        "plan": "monthly",
+        "plan": plan_clean,
         "subscribed_at": now.isoformat(),
-        "subscription_expires_at": (now + timedelta(days=31)).isoformat(),
+        "subscription_expires_at": (now + timedelta(days=duration_days)).isoformat(),
         "order_id": order_id,
         "payment_id": payment_id,
     }
@@ -879,67 +1128,45 @@ def _ensure_user_resumes(user: dict) -> list:
 
 
 @app.route("/api/resume-status")
+@login_required
 def api_resume_status():
-    user = _find_session_user()
-    if user:
-        resumes = _ensure_user_resumes(user)
-        primary = next((r for r in resumes if r.get("is_primary")), None)
-        
-        primary_info = None
-        if primary:
-            primary_info = {
-                "id": primary["id"],
-                "filename": primary["filename"],
-                "size_bytes": primary.get("size_bytes", 0),
-                "size_kb": primary.get("size_kb", 0),
-                "modified": primary.get("uploaded_at"),
-                "chars_extracted": len(primary.get("resume_text", "")),
-                "is_primary": True,
-            }
-        
-        resumes_summary = [
-            {
-                "id": r["id"],
-                "filename": r["filename"],
-                "size_bytes": r.get("size_bytes", 0),
-                "size_kb": r.get("size_kb", 0),
-                "uploaded_at": r.get("uploaded_at"),
-                "is_primary": bool(r.get("is_primary")),
-                "chars_extracted": len(r.get("resume_text", "")),
-            }
-            for r in resumes
-        ]
+    user = get_current_user()
+    resumes = _ensure_user_resumes(user)
+    primary = next((r for r in resumes if r.get("is_primary")), None)
+    
+    primary_info = None
+    if primary:
+        primary_info = {
+            "id": primary["id"],
+            "filename": primary["filename"],
+            "size_bytes": primary.get("size_bytes", 0),
+            "size_kb": primary.get("size_kb", 0),
+            "modified": primary.get("uploaded_at"),
+            "chars_extracted": len(primary.get("resume_text", "")),
+            "is_primary": True,
+        }
+    
+    resumes_summary = [
+        {
+            "id": r["id"],
+            "filename": r["filename"],
+            "size_bytes": r.get("size_bytes", 0),
+            "size_kb": r.get("size_kb", 0),
+            "uploaded_at": r.get("uploaded_at"),
+            "is_primary": bool(r.get("is_primary")),
+            "chars_extracted": len(r.get("resume_text", "")),
+        }
+        for r in resumes
+    ]
 
-        return jsonify({
-            "authenticated": True,
-            "resume": primary_info,
-            "has_resume": primary_info is not None,
-            "resumes": resumes_summary,
-            "primary_resume_id": primary.get("id") if primary else None,
-            "primary_resume_filename": primary.get("filename") if primary else None,
-        })
-    else:
-        # Fallback for unauthenticated or default user
-        info = find_resume()
-        resumes_summary = []
-        if info:
-            resumes_summary = [{
-                "id": "res_default",
-                "filename": info["filename"],
-                "size_bytes": info.get("size_bytes", 0),
-                "size_kb": info.get("size_kb", 0),
-                "uploaded_at": info.get("modified"),
-                "is_primary": True,
-                "chars_extracted": 0,
-            }]
-        return jsonify({
-            "authenticated": False,
-            "resume": info,
-            "has_resume": info is not None,
-            "resumes": resumes_summary,
-            "primary_resume_id": "res_default" if info else None,
-            "primary_resume_filename": info["filename"] if info else None,
-        })
+    return jsonify({
+        "authenticated": True,
+        "resume": primary_info,
+        "has_resume": primary_info is not None,
+        "resumes": resumes_summary,
+        "primary_resume_id": primary.get("id") if primary else None,
+        "primary_resume_filename": primary.get("filename") if primary else None,
+    })
 
 
 @app.route("/api/upload-resume", methods=["POST"])
@@ -1162,6 +1389,94 @@ def api_applied_jobs():
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ── Manual Job Search Trigger & Concurrency Control ──────────────────────────
+
+_active_searches: set[str] = set()
+_active_searches_lock = threading.Lock()
+
+
+def _user_has_resume(user: dict) -> bool:
+    """Check whether user has an uploaded/parsed primary resume or resume text."""
+    if not user:
+        return False
+    resumes = _ensure_user_resumes(user)
+    primary = next((r for r in resumes if r.get("is_primary")), None)
+    if primary and (primary.get("resume_text") or primary.get("file_path")):
+        return True
+    return bool(user.get("resume_text"))
+
+
+@app.route("/api/start-search", methods=["POST"])
+@require_auth
+def api_start_search():
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Authentication required. Please log in."}), 401
+
+    if not _user_has_resume(user):
+        return jsonify({
+            "success": False,
+            "status": "error",
+            "message": "Please upload a resume before starting a job search.",
+            "error": "Please upload a resume before starting a job search.",
+        }), 400
+
+    uid = user.get("user_id") or user.get("email")
+    with _active_searches_lock:
+        if uid in _active_searches:
+            return jsonify({
+                "success": False,
+                "status": "already_running",
+                "message": "A job search is already running for your account.",
+                "error": "A job search is already running for your account.",
+            }), 409
+        _active_searches.add(uid)
+
+    def _execute_search():
+        try:
+            import job_search_agent
+            dry_run = app.config.get("AGENT_DRY_RUN", False)
+            job_search_agent.run_search_for_user(user, dry_run=dry_run)
+        except Exception as e:
+            app.logger.error(f"[StartSearch] Error running search for {uid}: {e}", exc_info=True)
+        finally:
+            with _active_searches_lock:
+                _active_searches.discard(uid)
+
+    if app.config.get("SYNCHRONOUS_SEARCH"):
+        _execute_search()
+    else:
+        search_thread = threading.Thread(
+            target=_execute_search,
+            daemon=True,
+            name=f"search-{uid}"
+        )
+        search_thread.start()
+
+    return jsonify({
+        "success": True,
+        "status": "started",
+        "message": "Job search started",
+    }), 200
+
+
+@app.route("/api/search-status")
+@require_auth
+def api_search_status():
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Authentication required. Please log in."}), 401
+
+    uid = user.get("user_id") or user.get("email")
+    with _active_searches_lock:
+        is_running = uid in _active_searches
+
+    return jsonify({
+        "running": is_running,
+        "status": "running" if is_running else "idle",
+    })
 
 
 @app.route("/")

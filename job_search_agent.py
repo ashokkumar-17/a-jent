@@ -42,6 +42,11 @@ from logging.handlers import RotatingFileHandler
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import db
+from a_jent import job_sources
+from a_jent import notifications
+from a_jent import job_matcher
+from a_jent import resume_parser
+from a_jent import job_filter
 
 # -----------------------------------------------------------------------
 # PATHS
@@ -113,33 +118,29 @@ def _get(key: str, default, cast=None):
     return val
 
 
-# --- Delivery ---
-ZAPIER_WEBHOOK_URL = _get("ZAPIER_WEBHOOK_URL", "PASTE_YOUR_ZAPIER_CATCH_HOOK_URL_HERE")
-GMAIL_ADDRESS = _get("GMAIL_ADDRESS", "")
-GMAIL_APP_PASSWORD = _get("GMAIL_APP_PASSWORD", "")
-GMAIL_TO_ADDRESS = _get("GMAIL_TO_ADDRESS", "") or GMAIL_ADDRESS
-FORCE_DIRECT_GMAIL = str(_get("FORCE_DIRECT_GMAIL", "false")).lower() == "true"
-TELEGRAM_BOT_TOKEN = _get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = _get("TELEGRAM_CHAT_ID", "")
-DISCORD_WEBHOOK_URL = _get("DISCORD_WEBHOOK_URL", "")
-SENDGRID_API_KEY = _get("SENDGRID_API_KEY", "")
+# --- Delivery (Extracted to notifications.py - Task 7) ---
+ZAPIER_WEBHOOK_URL = notifications.ZAPIER_WEBHOOK_URL
+GMAIL_ADDRESS = notifications.GMAIL_ADDRESS
+GMAIL_APP_PASSWORD = notifications.GMAIL_APP_PASSWORD
+GMAIL_TO_ADDRESS = notifications.GMAIL_TO_ADDRESS
+FORCE_DIRECT_GMAIL = notifications.FORCE_DIRECT_GMAIL
+TELEGRAM_BOT_TOKEN = notifications.TELEGRAM_BOT_TOKEN
+TELEGRAM_CHAT_ID = notifications.TELEGRAM_CHAT_ID
+DISCORD_WEBHOOK_URL = notifications.DISCORD_WEBHOOK_URL
+SENDGRID_API_KEY = notifications.SENDGRID_API_KEY
 
-# --- Matching ---
-RESUME_PATH = str(_get("RESUME_PATH", str(BASE_DIR / "resume.pdf")))
-SIMILARITY_THRESHOLD = _get("SIMILARITY_THRESHOLD", 0.12, float)
-TITLE_BOOST_MULTIPLIER = _get("TITLE_BOOST_MULTIPLIER", 1.4, float)
-LEVEL_FILTERS = _get("LEVEL_FILTERS", ["intern", "internship", "entry level", "junior", "new grad", "graduate"])
-if isinstance(LEVEL_FILTERS, str):
-    LEVEL_FILTERS = [x.strip() for x in LEVEL_FILTERS.split(",")]
+# --- Matching (Extracted to job_matcher.py - Task 8) ---
+RESUME_PATH = resume_parser.RESUME_PATH
+SIMILARITY_THRESHOLD = job_matcher.SIMILARITY_THRESHOLD
+TITLE_BOOST_MULTIPLIER = job_matcher.TITLE_BOOST_MULTIPLIER
+LEVEL_FILTERS = job_filter.LEVEL_FILTERS
 
 # --- Scheduling ---
 CHECK_INTERVAL_HOURS = _get("CHECK_INTERVAL_HOURS", 2.0, float)
 
-# --- Location ---
-PREFER_REMOTE = str(_get("PREFER_REMOTE", "true")).lower() == "true"
-PREFERRED_LOCATIONS = _get("PREFERRED_LOCATIONS", [])
-if isinstance(PREFERRED_LOCATIONS, str):
-    PREFERRED_LOCATIONS = [x.strip() for x in PREFERRED_LOCATIONS.split(",") if x.strip()]
+# --- Location (Extracted to job_filter.py - Task 10) ---
+PREFER_REMOTE = job_filter.PREFER_REMOTE
+PREFERRED_LOCATIONS = job_filter.PREFERRED_LOCATIONS
 
 # --- Company watchlists ---
 GREENHOUSE_COMPANY_SLUGS = _get("GREENHOUSE_COMPANY_SLUGS", [])
@@ -175,62 +176,15 @@ SUBSCRIPTION_REQUIRED = str(_get("SUBSCRIPTION_REQUIRED", "true")).lower() == "t
 SUBSCRIPTIONS_FILE = BASE_DIR / "subscriptions.json"
 
 # --- Job feed URLs ---
-WWR_RSS_FEEDS = [
-    "https://weworkremotely.com/categories/remote-programming-jobs.rss",
-    "https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss",
-]
+WWR_RSS_FEEDS = job_sources.WWR_RSS_FEEDS
 
-FALLBACK_KEYWORDS_TEXT = (
-    # Core roles
-    "software engineer intern software engineering intern data science intern "
-    "machine learning intern backend developer frontend developer full stack developer "
-    "python developer javascript developer react developer node developer "
-    "devops intern cloud intern data engineer intern data analyst intern "
-    "computer science intern web developer intern product intern research intern "
-    "entry level junior new grad graduate fresher trainee "
-    # Skills
-    "python javascript typescript react nextjs nodejs express fastapi django flask "
-    "sql postgresql mysql mongodb redis docker kubernetes git github linux "
-    "machine learning deep learning tensorflow pytorch scikit-learn pandas numpy "
-    "api rest graphql microservices ci cd aws gcp azure cloud "
-    "data structures algorithms system design object oriented programming "
-    # India-specific
-    "bangalore mumbai delhi hyderabad pune chennai india remote work from home "
-    "internship stipend 6 months 3 months summer internship winter internship "
-    "b.tech btech mtech msc bsc computer science engineering information technology "
-    # Certifications / buzzwords
-    "open source contribution competitive programming problem solving agile scrum "
-    "communication teamwork analytical skills research publication ieee acm "
-)
+# --- Fallback Keyword Profile (Extracted to resume_parser.py - Task 9) ---
+FALLBACK_KEYWORDS_TEXT = resume_parser.FALLBACK_KEYWORDS_TEXT
 
 # -----------------------------------------------------------------------
-# SYNONYM EXPANSION TABLE
-# Expands abbreviations/aliases before TF-IDF so they score correctly.
+# SYNONYM EXPANSION TABLE — Extracted to job_matcher.py (Task 8)
 # -----------------------------------------------------------------------
-SYNONYM_MAP = {
-    r"\bml\b": "machine learning",
-    r"\bai\b": "artificial intelligence",
-    r"\bswe\b": "software engineer",
-    r"\bsde\b": "software development engineer",
-    r"\bfe\b": "frontend",
-    r"\bbe\b": "backend",
-    r"\bfs\b": "full stack",
-    r"\bds\b": "data science",
-    r"\bnlp\b": "natural language processing",
-    r"\bcv\b": "computer vision",
-    r"\bllm\b": "large language model",
-    r"\bapi\b": "application programming interface",
-    r"\bdb\b": "database",
-    r"\bos\b": "operating system",
-    r"\bci\b": "continuous integration",
-    r"\bcd\b": "continuous deployment",
-    r"\bk8s\b": "kubernetes",
-    r"\baws\b": "amazon web services",
-    r"\bgcp\b": "google cloud platform",
-    r"\bjs\b": "javascript",
-    r"\bts\b": "typescript",
-    r"\bpy\b": "python",
-}
+SYNONYM_MAP = job_matcher.SYNONYM_MAP
 
 # -----------------------------------------------------------------------
 # SUBSCRIPTION GATE
@@ -292,8 +246,11 @@ def _handle_stop(signum, frame):
     _RUNNING = False
 
 
-signal.signal(signal.SIGINT, _handle_stop)
-signal.signal(signal.SIGTERM, _handle_stop)
+try:
+    signal.signal(signal.SIGINT, _handle_stop)
+    signal.signal(signal.SIGTERM, _handle_stop)
+except (ValueError, AttributeError):
+    pass
 
 
 # -----------------------------------------------------------------------
@@ -338,515 +295,106 @@ def save_cycle_stats(stats: list):
 
 
 # -----------------------------------------------------------------------
-# RESUME TEXT EXTRACTION
+# RESUME TEXT EXTRACTION — Extracted to resume_parser.py (Task 9)
 # -----------------------------------------------------------------------
-def extract_resume_text(path: str) -> str:
-    if not path or not os.path.exists(path):
-        return ""
-    ext = path.lower().rsplit(".", 1)[-1]
-    try:
-        if ext == "pdf":
-            import pdfplumber
-            text_parts = []
-            with pdfplumber.open(path) as pdf:
-                for page in pdf.pages:
-                    text_parts.append(page.extract_text() or "")
-            return "\n".join(text_parts)
-        elif ext == "docx":
-            import docx
-            d = docx.Document(path)
-            return "\n".join(p.text for p in d.paragraphs)
-        else:
-            log.warning(f"Unsupported resume format: .{ext} — use .pdf or .docx")
-            return ""
-    except Exception as e:
-        log.warning(f"Could not parse resume ({path}): {e}")
-        return ""
+extract_resume_text = resume_parser.extract_resume_text
 
 
-def get_resume_text() -> str:
-    text = extract_resume_text(RESUME_PATH)
-    if text.strip():
-        log.info(f"Loaded resume: {len(text)} chars from {RESUME_PATH}")
-        return text
-    log.info("No resume found/parsed — using fallback keyword profile.")
-    return FALLBACK_KEYWORDS_TEXT
-
-
-# -----------------------------------------------------------------------
-# SYNONYM EXPANSION
-# -----------------------------------------------------------------------
-def expand_synonyms(text: str) -> str:
-    """Expand abbreviations/aliases so TF-IDF matches them correctly."""
-    lower = text.lower()
-    for pattern, replacement in SYNONYM_MAP.items():
-        lower = re.sub(pattern, replacement, lower)
-    return lower
-
-
-# -----------------------------------------------------------------------
-# SOURCE FETCHERS
-# -----------------------------------------------------------------------
-_SESSION = requests.Session()
-_SESSION.headers.update({"User-Agent": "Mozilla/5.0 (compatible; job-search-agent/3.0)"})
-
-
-def _safe_get(url: str, timeout: int = 15, **kwargs):
-    """GET with error logging; returns Response or None."""
-    try:
-        r = _SESSION.get(url, timeout=timeout, **kwargs)
-        r.raise_for_status()
-        return r
-    except Exception as e:
-        log.warning(f"GET {url} failed: {e}")
-        return None
-
-
-def fetch_remoteok() -> list:
-    jobs = []
-    r = _safe_get("https://remoteok.com/api")
-    if not r:
-        return jobs
-    for item in r.json():
-        if not isinstance(item, dict) or "id" not in item:
-            continue
-        jobs.append({
-            "id": f"remoteok_{item.get('id')}",
-            "title": item.get("position", ""),
-            "company": item.get("company", ""),
-            "url": item.get("url", ""),
-            "location": "Remote",
-            "description": (item.get("description") or "")[:3000],
-            "source": "RemoteOK",
-            "posted_at": item.get("date", ""),
-        })
-    return jobs
-
-
-def fetch_arbeitnow() -> list:
-    jobs = []
-    r = _safe_get("https://www.arbeitnow.com/api/job-board-api")
-    if not r:
-        return jobs
-    for item in r.json().get("data", []):
-        jobs.append({
-            "id": f"arbeitnow_{item.get('slug')}",
-            "title": item.get("title", ""),
-            "company": item.get("company_name", ""),
-            "url": item.get("url", ""),
-            "location": item.get("location", ""),
-            "description": (item.get("description") or "")[:3000],
-            "source": "Arbeitnow",
-            "posted_at": item.get("created_at", ""),
-        })
-    return jobs
-
-
-def fetch_jobicy() -> list:
-    jobs = []
-    r = _safe_get("https://jobicy.com/api/v2/remote-jobs")
-    if not r:
-        return jobs
-    for item in r.json().get("jobs", []):
-        jobs.append({
-            "id": f"jobicy_{item.get('id')}",
-            "title": item.get("jobTitle", ""),
-            "company": item.get("companyName", ""),
-            "url": item.get("url", ""),
-            "location": item.get("jobGeo", "Remote"),
-            "description": (item.get("jobExcerpt") or item.get("jobDescription") or "")[:3000],
-            "source": "Jobicy",
-            "posted_at": item.get("pubDate", ""),
-        })
-    return jobs
-
-
-def fetch_himalayas() -> list:
-    jobs = []
-    r = _safe_get("https://himalayas.app/jobs/api")
-    if not r:
-        return jobs
-    data = r.json()
-    listings = data.get("jobs", data) if isinstance(data, dict) else data
-    for item in listings:
-        jobs.append({
-            "id": f"himalayas_{item.get('guid', item.get('id'))}",
-            "title": item.get("title", ""),
-            "company": item.get("companyName", ""),
-            "url": item.get("applicationLink", item.get("url", "")),
-            "location": item.get("location", "Remote"),
-            "description": (item.get("description") or "")[:3000],
-            "source": "Himalayas",
-            "posted_at": item.get("pubDate", ""),
-        })
-    return jobs
-
-
-def fetch_remotive() -> list:
-    """Remotive — popular remote-first board with category filtering."""
-    jobs = []
-    r = _safe_get("https://remotive.com/api/remote-jobs")
-    if not r:
-        return jobs
-    for item in r.json().get("jobs", []):
-        jobs.append({
-            "id": f"remotive_{item.get('id')}",
-            "title": item.get("title", ""),
-            "company": item.get("company_name", ""),
-            "url": item.get("url", ""),
-            "location": item.get("candidate_required_location", "Remote"),
-            "description": re.sub(r"<[^<]+?>", " ", item.get("description") or "")[:3000],
-            "source": "Remotive",
-            "posted_at": item.get("publication_date", ""),
-        })
-    return jobs
-
-
-def fetch_hn_whoishiring() -> list:
-    jobs = []
-    r = _safe_get(
-        "https://hn.algolia.com/api/v1/search_by_date"
-        "?tags=story,author_whoishiring&query=Who%20is%20hiring"
+def get_resume_text(resume_path: str = None) -> str:
+    """Compatibility wrapper delegating to resume_parser.get_resume_text."""
+    return resume_parser.get_resume_text(
+        resume_path=resume_path if resume_path is not None else RESUME_PATH
     )
-    if not r:
-        return jobs
-    hits = r.json().get("hits", [])
-    if not hits:
-        return jobs
-    story_id = hits[0]["objectID"]
-    r2 = _safe_get(f"https://hn.algolia.com/api/v1/items/{story_id}")
-    if not r2:
-        return jobs
-    for c in r2.json().get("children", []):
-        text = c.get("text") or ""
-        if not text:
-            continue
-        clean = re.sub(r"<[^<]+?>", " ", text).strip()
-        jobs.append({
-            "id": f"hn_{c.get('id')}",
-            "title": clean.split("\n")[0][:200],
-            "company": "(see post)",
-            "url": f"https://news.ycombinator.com/item?id={c.get('id')}",
-            "location": "",
-            "description": clean[:3000],
-            "source": "HN Who's Hiring",
-            "posted_at": "",
-        })
-    return jobs
-
-
-def fetch_wwr_rss() -> list:
-    jobs = []
-    for feed_url in WWR_RSS_FEEDS:
-        try:
-            feed = feedparser.parse(feed_url)
-            for entry in feed.entries:
-                jobs.append({
-                    "id": f"wwr_{entry.get('id', entry.get('link'))}",
-                    "title": entry.get("title", ""),
-                    "company": "",
-                    "url": entry.get("link", ""),
-                    "location": "Remote",
-                    "description": entry.get("summary", "")[:3000],
-                    "source": "We Work Remotely",
-                    "posted_at": "",
-                })
-        except Exception as e:
-            log.warning(f"WWR RSS fetch failed for {feed_url}: {e}")
-    return jobs
-
-
-def fetch_linkedin_rss() -> list:
-    """
-    LinkedIn public job RSS — no login required.
-    Format: https://www.linkedin.com/jobs/search/?keywords=<q>&location=<loc>&f_TPR=r86400&f_JT=I
-    Returns an RSS feed parseable by feedparser.
-    f_TPR=r86400  = posted in last 24 h
-    f_JT=I        = Internship job type
-    """
-    jobs = []
-    import urllib.parse
-    queries = [
-        ("software engineer intern", "India"),
-        ("data science intern", "India"),
-        ("developer internship", "India"),
-        ("machine learning intern", "India"),
-    ]
-    seen_ids: set = set()
-    for q, loc in queries:
-        params = urllib.parse.urlencode({
-            "keywords": q,
-            "location": loc,
-            "f_TPR": "r604800",   # last 7 days
-            "f_JT": "I",           # Internship type
-            "position": 1,
-            "pageNum": 0,
-        })
-        feed_url = f"https://www.linkedin.com/jobs/search/?{params}"
-        # LinkedIn serves HTML for browser; use RSS variant
-        rss_url = f"https://www.linkedin.com/jobs/search/?{params}&trk=public_jobs_jobs-search-bar_search-submit&redirect=false&position=1&pageNum=0"
-        # The true public RSS endpoint
-        rss_params = urllib.parse.urlencode({
-            "keywords": q,
-            "location": loc,
-            "f_TPR": "r604800",
-        })
-        rss_endpoint = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?{rss_params}&start=0"
-        try:
-            r = _safe_get(
-                rss_endpoint,
-                timeout=15,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Accept": "text/html,application/xhtml+xml",
-                    "Accept-Language": "en-IN,en;q=0.9",
-                    "Referer": "https://www.linkedin.com/",
-                }
-            )
-            if not r:
-                continue
-            html = r.text
-            # Extract job card data from LinkedIn's public guest API response
-            ids   = re.findall(r'data-entity-urn="urn:li:jobPosting:([0-9]+)"', html)
-            titles   = re.findall(r'class="base-search-card__title"[^>]*>\s*([^<]+)\s*<', html)
-            companies = re.findall(r'class="base-search-card__subtitle"[^>]*>\s*<[^>]+>\s*([^<]+)\s*<', html)
-            locations = re.findall(r'class="job-search-card__location"[^>]*>\s*([^<]+)\s*<', html)
-            for i, jid in enumerate(ids):
-                uid = f"linkedin_{jid}"
-                if uid in seen_ids:
-                    continue
-                seen_ids.add(uid)
-                title = titles[i].strip() if i < len(titles) else f"Internship ({jid})"
-                company = companies[i].strip() if i < len(companies) else ""
-                location = locations[i].strip() if i < len(locations) else "India"
-                jobs.append({
-                    "id": uid,
-                    "title": title,
-                    "company": company,
-                    "url": f"https://www.linkedin.com/jobs/view/{jid}/",
-                    "location": location,
-                    "description": f"{title} at {company}. Location: {location}. Found via LinkedIn India.",
-                    "source": "LinkedIn",
-                    "posted_at": "",
-                })
-            log.debug(f"[LinkedIn] {q!r}: {len(ids)} listings")
-        except Exception as e:
-            log.debug(f"[LinkedIn] RSS error for {q!r}: {e}")
-    return jobs
-
-
-def fetch_greenhouse(slugs: list) -> list:
-    jobs = []
-    for slug in slugs:
-        r = _safe_get(f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true")
-        if not r:
-            continue
-        for item in r.json().get("jobs", []):
-            jobs.append({
-                "id": f"greenhouse_{item.get('id')}",
-                "title": item.get("title", ""),
-                "company": slug,
-                "url": item.get("absolute_url", ""),
-                "location": item.get("location", {}).get("name", ""),
-                "description": re.sub(r"<[^<]+?>", " ", item.get("content") or "")[:3000],
-                "source": f"Greenhouse ({slug})",
-                "posted_at": item.get("updated_at", ""),
-            })
-    return jobs
-
-
-def fetch_lever(slugs: list) -> list:
-    jobs = []
-    for slug in slugs:
-        r = _safe_get(f"https://api.lever.co/v0/postings/{slug}?mode=json")
-        if not r:
-            continue
-        for item in r.json():
-            jobs.append({
-                "id": f"lever_{item.get('id')}",
-                "title": item.get("text", ""),
-                "company": slug,
-                "url": item.get("hostedUrl", ""),
-                "location": item.get("categories", {}).get("location", ""),
-                "description": re.sub(
-                    r"<[^<]+?>", " ",
-                    item.get("descriptionPlain") or item.get("description") or ""
-                )[:3000],
-                "source": f"Lever ({slug})",
-                "posted_at": "",
-            })
-    return jobs
-
-
-def fetch_browser_sources() -> tuple:
-    """
-    Run Playwright-based scrapers for Internshala, Indeed, and Unstop.
-    Only runs if BROWSER_ENABLED=true in config.yaml or environment.
-    Returns (jobs_list, source_counts_dict).
-    """
-    jobs = []
-    source_counts = {}
-
-    if not BROWSER_ENABLED:
-        return jobs, source_counts
-
-    try:
-        from scrapers.browser_base import check_playwright
-        if not check_playwright():
-            log.warning(
-                "[Browser] playwright not installed. "
-                "Run: pip install playwright && playwright install chromium"
-            )
-            return jobs, source_counts
-    except ImportError:
-        log.warning("[Browser] scrapers package not found.")
-        return jobs, source_counts
-
-    # --- Internshala ---
-    try:
-        from scrapers.internshala import fetch_internshala
-        log.info("[Browser] Fetching Internshala...")
-        fetched = fetch_internshala(headless=BROWSER_HEADLESS)
-        source_counts["Internshala"] = len(fetched)
-        jobs += fetched
-        log.info(f"  Internshala: {len(fetched)} listings")
-    except Exception as e:
-        log.warning(f"[Browser] Internshala scraper failed: {e}")
-
-    # --- Indeed ---
-    try:
-        from scrapers.indeed import fetch_indeed
-        log.info(f"[Browser] Fetching Indeed ({INDEED_QUERY!r} in {INDEED_LOCATION!r})...")
-        fetched = fetch_indeed(
-            query=INDEED_QUERY,
-            location=INDEED_LOCATION,
-            headless=BROWSER_HEADLESS,
-        )
-        source_counts["Indeed"] = len(fetched)
-        jobs += fetched
-        log.info(f"  Indeed: {len(fetched)} listings")
-    except Exception as e:
-        log.warning(f"[Browser] Indeed scraper failed: {e}")
-
-    # --- Unstop ---
-    try:
-        from scrapers.unstop import fetch_unstop
-        log.info("[Browser] Fetching Unstop...")
-        fetched = fetch_unstop(
-            include_hackathons=UNSTOP_INCLUDE_HACKATHONS,
-            headless=BROWSER_HEADLESS,
-        )
-        source_counts["Unstop"] = len(fetched)
-        jobs += fetched
-        log.info(f"  Unstop: {len(fetched)} listings")
-    except Exception as e:
-        log.warning(f"[Browser] Unstop scraper failed: {e}")
-
-    return jobs, source_counts
-
-
-def fetch_all_sources() -> list:
-    sources = [
-        ("RemoteOK", fetch_remoteok),
-        ("Arbeitnow", fetch_arbeitnow),
-        ("Jobicy", fetch_jobicy),
-        ("Himalayas", fetch_himalayas),
-        ("Remotive", fetch_remotive),
-        ("HN Who's Hiring", fetch_hn_whoishiring),
-        ("We Work Remotely", fetch_wwr_rss),
-        ("LinkedIn", fetch_linkedin_rss),
-    ]
-    jobs = []
-    source_counts = {}
-    for name, fn in sources:
-        fetched = fn()
-        source_counts[name] = len(fetched)
-        jobs += fetched
-        log.info(f"  {name}: {len(fetched)} listings")
-
-    if GREENHOUSE_COMPANY_SLUGS:
-        fetched = fetch_greenhouse(GREENHOUSE_COMPANY_SLUGS)
-        source_counts["Greenhouse"] = len(fetched)
-        jobs += fetched
-    if LEVER_COMPANY_SLUGS:
-        fetched = fetch_lever(LEVER_COMPANY_SLUGS)
-        source_counts["Lever"] = len(fetched)
-        jobs += fetched
-
-    # Browser-based scrapers (Internshala, Indeed, Unstop)
-    if BROWSER_ENABLED:
-        b_jobs, b_counts = fetch_browser_sources()
-        jobs += b_jobs
-        source_counts.update(b_counts)
-
-    return jobs, source_counts
 
 
 # -----------------------------------------------------------------------
-# LOCAL AI MATCHING — TF-IDF + cosine similarity + title boost
+# SYNONYM EXPANSION — Extracted to job_matcher.py (Task 8)
 # -----------------------------------------------------------------------
-def rank_by_similarity(resume_text: str, jobs: list) -> list:
+expand_synonyms = job_matcher.expand_synonyms
+
+
+# -----------------------------------------------------------------------
+# SOURCE FETCHERS — Extracted to job_sources.py (Task 6)
+# -----------------------------------------------------------------------
+_SESSION = job_sources._SESSION
+_safe_get = job_sources._safe_get
+fetch_remoteok = job_sources.fetch_remoteok
+fetch_arbeitnow = job_sources.fetch_arbeitnow
+fetch_jobicy = job_sources.fetch_jobicy
+fetch_himalayas = job_sources.fetch_himalayas
+fetch_remotive = job_sources.fetch_remotive
+fetch_hn_whoishiring = job_sources.fetch_hn_whoishiring
+fetch_wwr_rss = job_sources.fetch_wwr_rss
+fetch_linkedin_rss = job_sources.fetch_linkedin_rss
+fetch_greenhouse = job_sources.fetch_greenhouse
+fetch_lever = job_sources.fetch_lever
+fetch_browser_sources = job_sources.fetch_browser_sources
+
+
+def fetch_all_sources(
+    greenhouse_slugs: list = None,
+    lever_slugs: list = None,
+    browser_enabled: bool = None,
+    browser_headless: bool = None,
+    indeed_query: str = None,
+    indeed_location: str = None,
+    unstop_include_hackathons: bool = None,
+) -> tuple[list, dict]:
+    """Compatibility wrapper delegating to job_sources.fetch_all_sources.
+
+    Preserves existing runtime return value (jobs: list, source_counts: dict).
     """
-    Scores every job's (title + description) against the resume using
-    TF-IDF cosine similarity. Applies synonym expansion first so
-    abbreviations like "ML" or "SWE" match correctly. Then applies a
-    title-boost multiplier if the job title contains a key term from the
-    resume profile. Returns sorted, filtered list with 'score' field.
-    """
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.metrics.pairwise import cosine_similarity
-
-    if not jobs:
-        return []
-
-    expanded_resume = expand_synonyms(resume_text)
-    corpus = [expanded_resume] + [
-        expand_synonyms(f"{j['title']} {j['description']}") for j in jobs
-    ]
-
-    vectorizer = TfidfVectorizer(stop_words="english", max_features=25000, ngram_range=(1, 2))
-    matrix = vectorizer.fit_transform(corpus)
-    resume_vec = matrix[0:1]
-    job_vecs = matrix[1:]
-    sims = cosine_similarity(resume_vec, job_vecs)[0]
-
-    # Extract top-weight terms from resume for title-boost check
-    feature_names = vectorizer.get_feature_names_out()
-    resume_arr = resume_vec.toarray()[0]
-    top_idx = resume_arr.argsort()[-50:][::-1]
-    resume_keywords = set(feature_names[i] for i in top_idx if resume_arr[i] > 0)
-
-    scored = []
-    for job, score in zip(jobs, sims):
-        title_lower = expand_synonyms(job.get("title", ""))
-        # Title boost: if any top resume keyword appears in the job title
-        if any(kw in title_lower for kw in resume_keywords):
-            score = min(score * TITLE_BOOST_MULTIPLIER, 1.0)
-        job["score"] = round(float(score), 4)
-        scored.append(job)
-
-    scored = [j for j in scored if j["score"] >= SIMILARITY_THRESHOLD]
-    scored.sort(key=lambda j: j["score"], reverse=True)
-    return scored
+    return job_sources.fetch_all_sources(
+        greenhouse_slugs=greenhouse_slugs if greenhouse_slugs is not None else GREENHOUSE_COMPANY_SLUGS,
+        lever_slugs=lever_slugs if lever_slugs is not None else LEVER_COMPANY_SLUGS,
+        browser_enabled=browser_enabled if browser_enabled is not None else BROWSER_ENABLED,
+        browser_headless=browser_headless if browser_headless is not None else BROWSER_HEADLESS,
+        indeed_query=indeed_query if indeed_query is not None else INDEED_QUERY,
+        indeed_location=indeed_location if indeed_location is not None else INDEED_LOCATION,
+        unstop_include_hackathons=unstop_include_hackathons if unstop_include_hackathons is not None else UNSTOP_INCLUDE_HACKATHONS,
+    )
 
 
-def passes_level_filter(job: dict) -> bool:
-    if not LEVEL_FILTERS:
-        return True
-    blob = f"{job.get('title', '')} {job.get('description', '')}".lower()
-    return any(lvl in blob for lvl in LEVEL_FILTERS)
+# -----------------------------------------------------------------------
+# LOCAL AI MATCHING — Extracted to job_matcher.py (Task 8)
+# -----------------------------------------------------------------------
+def rank_by_similarity(
+    resume_text: str,
+    jobs: list,
+    similarity_threshold: float = None,
+    title_boost_multiplier: float = None,
+) -> list:
+    """Compatibility wrapper delegating to job_matcher.rank_by_similarity."""
+    return job_matcher.rank_by_similarity(
+        resume_text=resume_text,
+        jobs=jobs,
+        similarity_threshold=similarity_threshold if similarity_threshold is not None else SIMILARITY_THRESHOLD,
+        title_boost_multiplier=title_boost_multiplier if title_boost_multiplier is not None else TITLE_BOOST_MULTIPLIER,
+    )
 
 
-def passes_location_filter(job: dict) -> bool:
-    """Pass if: remote preferred and job is remote, or location in preferred list."""
-    if not PREFER_REMOTE and not PREFERRED_LOCATIONS:
-        return True
-    loc = (job.get("location") or "").lower()
-    if PREFER_REMOTE and ("remote" in loc or not loc):
-        return True
-    if PREFERRED_LOCATIONS:
-        return any(pl.lower() in loc for pl in PREFERRED_LOCATIONS)
-    return PREFER_REMOTE and not loc
+# -----------------------------------------------------------------------
+# ELIGIBILITY FILTERS — Extracted to job_filter.py (Task 10)
+# -----------------------------------------------------------------------
+def passes_level_filter(job: dict, level_filters: list = None) -> bool:
+    """Compatibility wrapper delegating to job_filter.passes_level_filter."""
+    return job_filter.passes_level_filter(
+        job=job,
+        level_filters=level_filters if level_filters is not None else LEVEL_FILTERS,
+    )
+
+
+def passes_location_filter(
+    job: dict,
+    prefer_remote: bool = None,
+    preferred_locations: list = None,
+) -> bool:
+    """Compatibility wrapper delegating to job_filter.passes_location_filter."""
+    return job_filter.passes_location_filter(
+        job=job,
+        prefer_remote=prefer_remote if prefer_remote is None else PREFER_REMOTE,
+        preferred_locations=preferred_locations if preferred_locations is not None else PREFERRED_LOCATIONS,
+    )
 
 
 # -----------------------------------------------------------------------
@@ -861,270 +409,177 @@ def save_seen(seen: dict, user_id: str = None):
 
 
 # -----------------------------------------------------------------------
-# NOTIFICATIONS
+# NOTIFICATIONS — Extracted to notifications.py (Task 7)
 # -----------------------------------------------------------------------
-_SCORE_COLORS = [
-    (0.40, "#22c55e"),   # green  — excellent
-    (0.25, "#f59e0b"),   # amber  — good
-    (0.12, "#6366f1"),   # indigo — decent
-    (0.00, "#94a3b8"),   # slate  — low
-]
+_SCORE_COLORS = notifications._SCORE_COLORS
+_score_color = notifications._score_color
+_score_bar = notifications._score_bar
+build_html_email = notifications.build_html_email
+send_to_zapier = notifications.send_to_zapier
+send_via_sendgrid = notifications.send_via_sendgrid
+send_via_gmail = notifications.send_via_gmail
+send_via_telegram = notifications.send_via_telegram
+send_via_discord = notifications.send_via_discord
 
 
-def _score_color(score: float) -> str:
-    for threshold, color in _SCORE_COLORS:
-        if score >= threshold:
-            return color
-    return "#94a3b8"
+def notify(job: dict, to_email: str = None, dry_run: bool = None) -> bool:
+    """Compatibility wrapper delegating to notifications.notify.
 
-
-def _score_bar(score: float) -> str:
-    pct = int(min(score * 250, 100))  # scale 0-0.4 → 0-100%
-    return "█" * (pct // 10) + "░" * (10 - pct // 10)
-
-
-def build_html_email(job: dict) -> str:
-    score = job.get("score", 0)
-    color = _score_color(score)
-    bar = _score_bar(score)
-    title = job.get("title", "Unknown")
-    company = job.get("company", "Unknown")
-    source = job.get("source", "")
-    url = job.get("url", "#")
-    location = job.get("location", "") or "Not specified"
-    found_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-    return f"""<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><style>
-  body {{ font-family: 'Segoe UI', Arial, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 0; }}
-  .card {{ max-width: 600px; margin: 32px auto; background: #1e293b; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.4); }}
-  .header {{ background: linear-gradient(135deg, #1d4ed8, #7c3aed); padding: 28px 32px; }}
-  .header h1 {{ margin: 0 0 4px 0; font-size: 22px; color: #fff; }}
-  .header p {{ margin: 0; color: #bfdbfe; font-size: 14px; }}
-  .body {{ padding: 28px 32px; }}
-  .score-badge {{ display: inline-block; background: {color}22; border: 1px solid {color}; color: {color}; padding: 4px 14px; border-radius: 99px; font-size: 13px; font-weight: 600; margin-bottom: 18px; }}
-  .field {{ margin-bottom: 12px; }}
-  .label {{ font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #64748b; margin-bottom: 3px; }}
-  .value {{ font-size: 15px; color: #f1f5f9; }}
-  .bar {{ font-family: monospace; color: {color}; letter-spacing: 2px; }}
-  .apply-btn {{ display: block; text-align: center; margin: 28px 0 0; padding: 14px; background: linear-gradient(90deg, #1d4ed8, #7c3aed); color: #fff; text-decoration: none; border-radius: 10px; font-size: 16px; font-weight: 700; letter-spacing: .03em; }}
-  .footer {{ padding: 16px 32px; background: #0f172a; font-size: 11px; color: #475569; text-align: center; }}
-</style></head>
-<body>
-<div class="card">
-  <div class="header">
-    <h1>🎯 New Job Match Found</h1>
-    <p>A-Jent (Autonomous Job Exploration and Navigation Tool) · {found_at}</p>
-  </div>
-  <div class="body">
-    <div class="score-badge">Match Score: {score:.1%}</div>
-    <div class="field"><div class="label">Position</div><div class="value" style="font-size:19px;font-weight:700;">{title}</div></div>
-    <div class="field"><div class="label">Company</div><div class="value">{company}</div></div>
-    <div class="field"><div class="label">Location</div><div class="value">{location}</div></div>
-    <div class="field"><div class="label">Source</div><div class="value">{source}</div></div>
-    <div class="field"><div class="label">Match Strength</div><div class="bar">{bar}</div></div>
-    <a href="{url}" class="apply-btn">Apply Now →</a>
-  </div>
-  <div class="footer">A-Jent v3 · Autonomous Job Exploration and Navigation Tool · This match was found by your local job search agent</div>
-</div>
-</body>
-</html>"""
-
-
-def send_to_zapier(job: dict) -> bool:
-    if not ZAPIER_WEBHOOK_URL or "PASTE_YOUR" in ZAPIER_WEBHOOK_URL:
-        return False
-    payload = {
-        "title": job.get("title", ""),
-        "company": job.get("company", ""),
-        "url": job.get("url", ""),
-        "location": job.get("location", ""),
-        "source": job.get("source", ""),
-        "match_score": job.get("score", 0),
-        "found_at": datetime.now(timezone.utc).isoformat(),
-    }
-    try:
-        resp = _SESSION.post(ZAPIER_WEBHOOK_URL, json=payload, timeout=15)
-        resp.raise_for_status()
-        log.info(f"[OK] Zapier: {job['score']:.2f}  {job['title']} @ {job.get('company', '')}")
-        return True
-    except Exception as e:
-        log.warning(f"Zapier send failed: {e}")
-        return False
-
-
-def send_via_sendgrid(job: dict, to_address: str = None) -> bool:
-    """Send job match email via SendGrid API (no daily cap on paid plan).
-    Falls back silently if SENDGRID_API_KEY is not set.
+    Preserves existing delivery order: SendGrid -> Gmail -> Zapier (plus Telegram and Discord).
+    Respects _DRY_RUN unless explicitly overridden.
     """
-    if not SENDGRID_API_KEY:
-        return False
-    to = (to_address or GMAIL_TO_ADDRESS or "").strip()
-    if not to:
-        return False
-    from_email = GMAIL_ADDRESS or "noreply@a-jent.ai"
-    subject = f"Job Match ({job.get('score', 0):.0%}): {job.get('title', '')} @ {job.get('company', '')}"
-    html_body = build_html_email(job)
-    plain_body = (
-        f"New job match!\n\nTitle:    {job.get('title', '')}\n"
-        f"Company:  {job.get('company', '')}\nLocation: {job.get('location', '')}\n"
-        f"Score:    {job.get('score', 0):.3f}\nLink:     {job.get('url', '')}\n"
+    return notifications.notify(
+        job=job,
+        to_email=to_email,
+        dry_run=_DRY_RUN if dry_run is None else dry_run,
+        force_direct_gmail=FORCE_DIRECT_GMAIL,
+        sendgrid_api_key=SENDGRID_API_KEY,
+        gmail_address=GMAIL_ADDRESS,
+        gmail_app_password=GMAIL_APP_PASSWORD,
+        zapier_webhook_url=ZAPIER_WEBHOOK_URL,
+        telegram_bot_token=TELEGRAM_BOT_TOKEN,
+        telegram_chat_id=TELEGRAM_CHAT_ID,
+        discord_webhook_url=DISCORD_WEBHOOK_URL,
     )
-    payload = {
-        "personalizations": [{"to": [{"email": to}]}],
-        "from": {"email": from_email},
-        "subject": subject,
-        "content": [
-            {"type": "text/plain", "value": plain_body},
-            {"type": "text/html",  "value": html_body},
-        ],
-    }
-    try:
-        resp = _SESSION.post(
-            "https://api.sendgrid.com/v3/mail/send",
-            json=payload,
-            headers={"Authorization": f"Bearer {SENDGRID_API_KEY}", "Content-Type": "application/json"},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        log.info(f"[OK] SendGrid → {to}: {job['score']:.2f}  {job['title']} @ {job.get('company', '')}")
-        return True
-    except Exception as e:
-        log.warning(f"SendGrid send failed: {e}")
-        return False
 
 
-def send_via_gmail(job: dict, to_address: str = None) -> bool:
-    to = (to_address or GMAIL_TO_ADDRESS or "").strip()
-    if not GMAIL_ADDRESS or not GMAIL_APP_PASSWORD or not to:
-        return False
+# -----------------------------------------------------------------------
+# USER-SPECIFIC JOB EVALUATION & SEARCH (REUSABLE ORCHESTRATION BOUNDARY)
+# -----------------------------------------------------------------------
+def evaluate_jobs_for_user(
+    sub: dict,
+    all_jobs: list,
+    source_counts: dict = None,
+    dry_run: bool = None,
+    global_resume_text: str = None,
+) -> list:
+    """Evaluate, rank, notify, and record seen jobs for a single user."""
+    is_dry_run = _DRY_RUN if dry_run is None else dry_run
+    uid = sub.get("user_id", "default_user")
+    u_email = sub.get("email", "")
+    log.info(f"[SaaS] Evaluating jobs for user: {u_email} ({uid})")
 
-    subject = f"Job Match ({job.get('score', 0):.0%}): {job.get('title', '')} @ {job.get('company', '')}"
+    user_seen = load_seen(user_id=uid)
+    unseen = [j for j in all_jobs if j["id"] not in user_seen]
+    level_ok = [j for j in unseen if passes_level_filter(j)]
+    loc_ok = [j for j in level_ok if passes_location_filter(j)]
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = GMAIL_ADDRESS
-    msg["To"] = to
+    # Resolve user's Primary Resume as the sole source of truth
+    primary_resume_text = None
+    for r in sub.get("resumes", []):
+        if r.get("is_primary"):
+            primary_resume_text = r.get("resume_text")
+            break
+    user_resume = primary_resume_text or sub.get("resume_text") or (global_resume_text if global_resume_text is not None else get_resume_text())
+    primary_name = sub.get("resume_filename") or "primary resume"
+    ranked = rank_by_similarity(user_resume, loc_ok)
 
-    # Plain-text fallback
-    plain = (
-        f"New job match!\n\n"
-        f"Title:    {job.get('title', '')}\n"
-        f"Company:  {job.get('company', '')}\n"
-        f"Location: {job.get('location', '')}\n"
-        f"Source:   {job.get('source', '')}\n"
-        f"Score:    {job.get('score', 0):.3f}\n"
-        f"Link:     {job.get('url', '')}\n"
-        f"Found at: {datetime.now(timezone.utc).isoformat()}\n"
+    log.info(
+        f"  [{u_email}] Source of truth: {primary_name} -> {len(unseen)} unseen -> {len(level_ok)} pass level -> "
+        f"{len(loc_ok)} pass location -> {len(ranked)} matched"
     )
-    msg.attach(MIMEText(plain, "plain"))
-    msg.attach(MIMEText(build_html_email(job), "html"))
 
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as server:
-            server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-            server.sendmail(GMAIL_ADDRESS, [to], msg.as_string())
-        log.info(f"[OK] Gmail → {to}: {job['score']:.2f}  {job['title']} @ {job.get('company', '')}")
-        return True
-    except Exception as e:
-        log.warning(f"Gmail send failed: {e}")
-        return False
+    for job in ranked:
+        notify(job, to_email=u_email or None, dry_run=is_dry_run)
 
+        if AUTO_APPLY_ENABLED and job.get("score", 0) >= AUTO_APPLY_THRESHOLD:
+            try:
+                from scrapers.auto_apply import auto_apply
+                auto_apply(
+                    job=job,
+                    resume_text=user_resume,
+                    cover_letter_template=COVER_LETTER_TEMPLATE,
+                    enabled_platforms=AUTO_APPLY_PLATFORMS,
+                    dry_run=is_dry_run,
+                    user_id=uid,
+                )
+            except Exception as e:
+                log.warning(f"[AutoApply] Error: {e}")
 
-def send_via_telegram(job: dict) -> bool:
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return False
-    score = job.get("score", 0)
-    text = (
-        f"🎯 *New Job Match* ({score:.0%})\n\n"
-        f"*{job.get('title', '')}*\n"
-        f"🏢 {job.get('company', '')}\n"
-        f"📍 {job.get('location', '') or 'Remote'}\n"
-        f"📡 {job.get('source', '')}\n\n"
-        f"[Apply Now]({job.get('url', '')})"
-    )
-    try:
-        resp = _SESSION.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        log.info(f"[OK] Telegram: {job['title']}")
-        return True
-    except Exception as e:
-        log.warning(f"Telegram send failed: {e}")
-        return False
+        if not is_dry_run:
+            time.sleep(1)
 
+    now_iso = datetime.now(timezone.utc).isoformat()
+    if not is_dry_run:
+        for job in all_jobs:
+            if job["id"] not in user_seen:
+                user_seen[job["id"]] = {
+                    "score": job.get("score", 0),
+                    "found_at": now_iso,
+                    "title": job.get("title", ""),
+                    "company": job.get("company", ""),
+                    "url": job.get("url", ""),
+                    "source": job.get("source", ""),
+                    "location": job.get("location", ""),
+                }
+        save_seen(user_seen, user_id=uid)
 
-def send_via_discord(job: dict) -> bool:
-    if not DISCORD_WEBHOOK_URL:
-        return False
-    score = job.get("score", 0)
-    color = int(_score_color(score).lstrip("#"), 16)
-    embed = {
-        "title": f"🎯 {job.get('title', '')}",
-        "url": job.get("url", ""),
-        "color": color,
-        "fields": [
-            {"name": "Company", "value": job.get("company", "—"), "inline": True},
-            {"name": "Location", "value": job.get("location", "") or "Remote", "inline": True},
-            {"name": "Source", "value": job.get("source", ""), "inline": True},
-            {"name": "Match Score", "value": f"{score:.1%}", "inline": True},
-        ],
-        "footer": {"text": "A-Jent (Autonomous Job Exploration and Navigation Tool)"},
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    try:
-        resp = _SESSION.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]}, timeout=15)
-        resp.raise_for_status()
-        log.info(f"[OK] Discord: {job['title']}")
-        return True
-    except Exception as e:
-        log.warning(f"Discord send failed: {e}")
-        return False
+    # Save cycle stats
+    stats = load_cycle_stats()
+    stats.append({
+        "timestamp": now_iso,
+        "total_fetched": len(all_jobs),
+        "unseen": len(unseen),
+        "passed_level_filter": len(level_ok),
+        "passed_location_filter": len(loc_ok),
+        "new_matches": len(ranked),
+        "sources": source_counts or {},
+    })
+    save_cycle_stats(stats)
+    return ranked
 
 
-def notify(job: dict, to_email: str = None):
+def run_search_for_user(
+    user: dict | str,
+    all_jobs: list = None,
+    source_counts: dict = None,
+    dry_run: bool = None,
+) -> list:
+    """Execute a single job search cycle specifically for the given user.
+
+    Reuses the existing job-search pipeline: fetches all sources, saves raw
+    jobs to DB, and evaluates/matches/notifies for this user.
     """
-    Delivery priority:
-      SendGrid (if key set) → Gmail → Zapier → Telegram → Discord → dry-run print
-    Telegram and Discord always fire alongside the primary channel (additive).
-    SendGrid has no daily cap on paid plans; Gmail is the free fallback.
-
-    If to_email is provided, email is sent to that address (per-subscriber delivery).
-    """
-    if _DRY_RUN:
-        log.info(f"[DRY RUN] {job['score']:.2f}  {job['title']} @ {job.get('company', '')}")
-        return
-
-    sent = False
-    if FORCE_DIRECT_GMAIL:
-        sent = send_via_gmail(job, to_address=to_email)
+    if isinstance(user, str):
+        users = db.load_users()
+        sub = next((u for u in users.values() if u.get("user_id") == user or u.get("email") == user), None)
+        if not sub:
+            sub = {"user_id": user, "email": user}
     else:
-        # Try SendGrid first (no send limits), fall back to Gmail, then Zapier
-        sent = (
-            send_via_sendgrid(job, to_address=to_email)
-            or send_via_gmail(job, to_address=to_email)
-            or send_to_zapier(job)
-        )
+        uid = user.get("user_id")
+        email = user.get("email")
+        users = db.load_users()
+        sub = next((u for u in users.values() if (uid and u.get("user_id") == uid) or (email and u.get("email") == email)), user)
 
-    # Always also fire supplemental channels
-    send_via_telegram(job)
-    send_via_discord(job)
+    is_dry_run = _DRY_RUN if dry_run is None else dry_run
+    cycle_start = datetime.now(timezone.utc)
+    log.info("-" * 60)
+    log.info(f"[Manual Trigger] User search start: {cycle_start.isoformat()} for {sub.get('email', '')} ({sub.get('user_id', '')})" + (" [DRY RUN]" if is_dry_run else ""))
 
-    if not sent and not TELEGRAM_BOT_TOKEN and not DISCORD_WEBHOOK_URL:
-        log.info(
-            f"[NO DELIVERY CONFIGURED] {job['score']:.2f}  {job['title']} @ {job.get('company', '')} — "
-            f"set GMAIL_ADDRESS/GMAIL_APP_PASSWORD, TELEGRAM_BOT_TOKEN, or DISCORD_WEBHOOK_URL"
-        )
+    if all_jobs is None:
+        log.info("Fetching all sources...")
+        all_jobs, source_counts = fetch_all_sources()
+        log.info(f"Fetched {len(all_jobs)} total listings across {len(source_counts)} sources.")
+        db.save_raw_jobs(all_jobs)
+
+    ranked = evaluate_jobs_for_user(
+        sub,
+        all_jobs,
+        source_counts=source_counts,
+        dry_run=is_dry_run,
+    )
+    log.info(f"[Manual Trigger] User search complete for {sub.get('email', '')}: {len(ranked)} matches found.\n")
+    return ranked
 
 
 # -----------------------------------------------------------------------
 # ONE CYCLE (MULTI-TENANT SAAS AWARE)
 # -----------------------------------------------------------------------
-def run_once():
+def run_once(target_user_id: str = None):
+    if target_user_id:
+        ranked = run_search_for_user(target_user_id)
+        return len(ranked)
+
     cycle_start = datetime.now(timezone.utc)
     log.info("-" * 60)
     log.info(f"Cycle start: {cycle_start.isoformat()}" + (" [DRY RUN]" if _DRY_RUN else ""))
@@ -1143,77 +598,14 @@ def run_once():
     total_matches = 0
 
     for sub in subscribers:
-        uid = sub.get("user_id", "default_user")
-        u_email = sub.get("email", "")
-        log.info(f"[SaaS] Evaluating jobs for user: {u_email} ({uid})")
-
-        user_seen = load_seen(user_id=uid)
-        unseen = [j for j in all_jobs if j["id"] not in user_seen]
-        level_ok = [j for j in unseen if passes_level_filter(j)]
-        loc_ok = [j for j in level_ok if passes_location_filter(j)]
-
-        # Resolve user's Primary Resume as the sole source of truth
-        primary_resume_text = None
-        for r in sub.get("resumes", []):
-            if r.get("is_primary"):
-                primary_resume_text = r.get("resume_text")
-                break
-        user_resume = primary_resume_text or sub.get("resume_text") or global_resume_text
-        primary_name = sub.get("resume_filename") or "primary resume"
-        ranked = rank_by_similarity(user_resume, loc_ok)
-
-        log.info(
-            f"  [{u_email}] Source of truth: {primary_name} -> {len(unseen)} unseen -> {len(level_ok)} pass level -> "
-            f"{len(loc_ok)} pass location -> {len(ranked)} matched"
+        ranked = evaluate_jobs_for_user(
+            sub,
+            all_jobs,
+            source_counts=source_counts,
+            dry_run=_DRY_RUN,
+            global_resume_text=global_resume_text,
         )
         total_matches += len(ranked)
-
-        for job in ranked:
-            notify(job, to_email=u_email or None)
-
-            if AUTO_APPLY_ENABLED and job.get("score", 0) >= AUTO_APPLY_THRESHOLD:
-                try:
-                    from scrapers.auto_apply import auto_apply
-                    auto_apply(
-                        job=job,
-                        resume_text=user_resume,
-                        cover_letter_template=COVER_LETTER_TEMPLATE,
-                        enabled_platforms=AUTO_APPLY_PLATFORMS,
-                        dry_run=_DRY_RUN,
-                        user_id=uid,
-                    )
-                except Exception as e:
-                    log.warning(f"[AutoApply] Error: {e}")
-
-            time.sleep(1)
-
-        now_iso = datetime.now(timezone.utc).isoformat()
-        if not _DRY_RUN:
-            for job in all_jobs:
-                if job["id"] not in user_seen:
-                    user_seen[job["id"]] = {
-                        "score": job.get("score", 0),
-                        "found_at": now_iso,
-                        "title": job.get("title", ""),
-                        "company": job.get("company", ""),
-                        "url": job.get("url", ""),
-                        "source": job.get("source", ""),
-                        "location": job.get("location", ""),
-                    }
-            save_seen(user_seen, user_id=uid)
-
-        # Save cycle stats
-        stats = load_cycle_stats()
-        stats.append({
-            "timestamp": now_iso,
-            "total_fetched": len(all_jobs),
-            "unseen": len(unseen),
-            "passed_level_filter": len(level_ok),
-            "passed_location_filter": len(loc_ok),
-            "new_matches": len(ranked),
-            "sources": source_counts,
-        })
-        save_cycle_stats(stats)
 
     log.info(f"Cycle complete at {datetime.now().isoformat()}.\n")
     return total_matches

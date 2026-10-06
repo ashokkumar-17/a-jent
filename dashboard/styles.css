@@ -588,6 +588,93 @@ body.jobs-route .topbar-heading { align-self: stretch; display: flex; flex-direc
 .upload-result.success { color: var(--mint-deep); }
 .upload-result.error { color: var(--danger); }
 
+/* Manual search trigger & status styling */
+.upload-confirm-box {
+  margin-top: 14px;
+  padding: 16px 18px;
+  border: 1px solid #bde6d1;
+  border-radius: var(--radius-md);
+  background: var(--surface-mint);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.upload-confirm-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--mint-deep);
+  font-size: 13px;
+  font-weight: 600;
+}
+.upload-confirm-subtext {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.search-trigger-actions {
+  margin-top: 6px;
+}
+.start-search-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  height: 38px;
+  padding: 0 20px;
+  background: var(--mint-deep);
+  border: 1px solid var(--mint-deep);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 2px 8px rgba(8, 116, 85, .16);
+  cursor: pointer;
+  transition: all .16s ease;
+}
+.start-search-btn:hover:not([disabled]) {
+  background: #065b43;
+  border-color: #065b43;
+  box-shadow: 0 4px 12px rgba(8, 116, 85, .24);
+  transform: translateY(-1px);
+}
+.start-search-btn[disabled] {
+  opacity: .65;
+  cursor: not-allowed;
+  transform: none;
+}
+.search-status-banner {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.search-status-banner.running {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  color: #166534;
+}
+.search-status-banner.error {
+  background: var(--surface-danger);
+  border: 1px solid #fecaca;
+  color: var(--danger);
+}
+.search-status-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.search-status-banner p {
+  margin: 0;
+  font-size: 11px;
+  opacity: .9;
+}
+
 /* Resume management list & agent source banner */
 .resume-manager-card { margin-top: 18px; padding: 20px; }
 .agent-source-banner { display: flex; align-items: center; gap: 14px; margin-top: 16px; margin-bottom: 20px; padding: 14px 16px; border: 1px solid #bde6d1; border-radius: var(--radius-md); background: var(--surface-mint); }
